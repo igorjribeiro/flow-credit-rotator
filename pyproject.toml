@@ -17,3 +17,7 @@ flow-account = "flow_account.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["flow_account*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+

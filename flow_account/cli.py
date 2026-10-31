@@ -158,7 +158,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(args: Optional[List[str]] = None) -> int:
     """Main CLI entrypoint."""
     parser = build_parser()
-    parsed = parser.parse_args(args)
+    try:
+        parsed = parser.parse_args(args)
+    except SystemExit as e:
+        return e.code if isinstance(e.code, int) else 2
 
     if not parsed.command:
         parser.print_help()

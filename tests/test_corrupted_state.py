@@ -52,6 +52,9 @@ def test_corrupted_database_cli_resilience(tmp_path, capsys):
 
 def test_corrupted_system_state_missing_row(temp_db_path, capsys):
     """Corrupted DB missing system_state row raises FlowAccountError and CLI handles cleanly."""
+    mgr = FlowAccountManager(db_path=temp_db_path)
+    mgr.db.close()
+
     # Delete system_state row
     conn = sqlite3.connect(temp_db_path)
     conn.execute("DELETE FROM system_state WHERE id = 1;")

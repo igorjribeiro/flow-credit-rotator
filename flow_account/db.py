@@ -115,10 +115,15 @@ class Database:
             conn = self._shared_conn if self._shared_conn else self._create_connection()
             try:
                 with conn:
+                    # Check if database schema is already initialized
+                    cursor = conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='system_state';"
+                    )
+                    table_exists = cursor.fetchone() is not None
+
                     conn.executescript(SCHEMA_SQL)
-                    # Check if system_state row 1 exists
-                    cursor = conn.execute("SELECT id FROM system_state WHERE id = 1;")
-                    if cursor.fetchone() is None:
+                    # Insert initial system_state row only on fresh database initialization
+                    if not table_exists:
                         conn.execute(
                             """
                             INSERT INTO system_state (
