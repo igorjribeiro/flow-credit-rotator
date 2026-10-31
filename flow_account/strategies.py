@@ -1,4 +1,4 @@
-"""Selection strategies for Google Flow Account Manager.
+"""Selection strategies for Flow Credit Rotator.
 
 Implements Sequential (with Priority alias), Round-Robin, Lowest-Usage,
 and Random algorithms with deterministic tie-breaking.

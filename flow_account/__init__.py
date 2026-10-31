@@ -1,9 +1,9 @@
-"""Google Flow Account Manager.
+"""Flow Credit Rotator.
 
-Manage multiple Google Flow accounts with credit limits, rotation, and credential safety.
+Multi-account credit rotation and quota manager for Google Flow automation agents.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 from flow_account.models import (
     Account,

@@ -1,4 +1,4 @@
-"""Command-line interface for Google Flow Account Manager.
+"""Command-line interface for Flow Credit Rotator.
 
 Provides CLI commands for account rotation, credit management, imports,
 monitoring, and human-in-the-loop workflows.
@@ -64,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Construct the command line argument parser."""
     parser = argparse.ArgumentParser(
         prog="flow-account",
-        description="Google Flow Account Manager: Multi-account rotation, quota tracking, and credential isolation.",
+        description="Flow Credit Rotator: Multi-account rotation, quota tracking, and credential isolation.",
     )
     parser.add_argument("--db", help="Path to SQLite database file override", default=None)
     parser.add_argument("--json", action="store_true", help="Output responses as JSON")
@@ -190,7 +190,7 @@ def main(args: Optional[List[str]] = None) -> int:
                 sys_info = st["system"]
                 curr = st["current_account"]
                 summary = st["summary"]
-                print("=== GOOGLE FLOW ACCOUNT MANAGER ===")
+                print("=== FLOW CREDIT ROTATOR ===")
                 print(f"Mode:               {sys_info['mode']}")
                 print(f"Strategy:           {sys_info['strategy']}")
                 print(f"Timezone:           {sys_info['timezone']}")

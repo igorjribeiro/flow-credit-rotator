@@ -1,4 +1,4 @@
-"""Manager core for Google Flow Account Manager.
+"""Manager core for Flow Credit Rotator.
 
 Orchestrates account rotation, credit tracking, limits, persistence, and audit logging.
 """
@@ -30,7 +30,7 @@ from flow_account.strategies import get_strategy
 
 
 class FlowAccountError(Exception):
-    """Base exception for Google Flow Account Manager."""
+    """Base exception for Flow Credit Rotator."""
     pass
 
 

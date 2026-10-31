@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Executable launcher for Google Flow Account Manager CLI."""
+"""Executable launcher for Flow Credit Rotator CLI."""
 
 import sys
 from pathlib import Path

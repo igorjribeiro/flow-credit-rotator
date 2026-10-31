@@ -3,14 +3,44 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "flow-account-manager"
-version = "0.1.0"
-description = "Multi-account Google Flow manager with quota tracking, rotation, and credential safety."
+name = "flow-credit-rotator"
+version = "1.0.0"
+description = "Multi-account credit rotation and quota manager for Google Flow automation agents."
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.9"
+authors = [
+    { name = "Igor J. Ribeiro / Hermes Community" }
+]
+keywords = [
+    "google-flow",
+    "credit-rotation",
+    "quota-manager",
+    "multi-account",
+    "automation",
+    "agent-skills",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Systems Administration",
+]
 dependencies = [
     "openpyxl>=3.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/igorjribeiro/flow-credit-rotator"
+Repository = "https://github.com/igorjribeiro/flow-credit-rotator"
+Documentation = "https://github.com/igorjribeiro/flow-credit-rotator#readme"
+Issues = "https://github.com/igorjribeiro/flow-credit-rotator/issues"
 
 [project.scripts]
 flow-account = "flow_account.cli:main"
@@ -20,4 +50,3 @@ include = ["flow_account*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-

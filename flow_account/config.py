@@ -1,4 +1,4 @@
-"""Configuration module for Google Flow Account Manager.
+"""Configuration module for Flow Credit Rotator.
 
 Provides default constants, environment variable parsing, and timezone utilities.
 Business logic relies on dynamic configuration and database settings, never hardcoded limits.

@@ -1,4 +1,4 @@
-"""Data models and enums for Google Flow Account Manager."""
+"""Data models and enums for Flow Credit Rotator."""
 
 from dataclasses import dataclass, asdict
 from enum import Enum

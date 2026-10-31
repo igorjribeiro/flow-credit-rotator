@@ -1,4 +1,4 @@
-"""Reset and rollover management for Google Flow Account Manager.
+"""Reset and rollover management for Flow Credit Rotator.
 
 Handles daily and monthly credit rollovers according to configured timezone (America/Bahia).
 Maintains immutable audit history while resetting counters and reactivating exhausted accounts.

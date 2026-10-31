@@ -1,4 +1,4 @@
-"""Database layer for Google Flow Account Manager.
+"""Database layer for Flow Credit Rotator.
 
 Provides SQLite initialization, WAL mode, pragmas, schema migrations,
 and thread-safe context managers for transactions.
