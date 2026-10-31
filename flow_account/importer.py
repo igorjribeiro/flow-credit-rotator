@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import openpyxl
 
-from flow_account.models import AccountStatus
+from flow_account.models import AccountStatus, validate_credential_ref
 
 FORBIDDEN_COLUMNS = {
     "password",
@@ -134,7 +134,7 @@ def parse_account_row(
 
     # Status
     status_val = get_val("status")
-    status = AccountStatus.ACTIVE.value
+    status = None
     if status_val is not None:
         status_clean = str(status_val).strip().upper()
         if status_clean in {s.value for s in AccountStatus}:
@@ -144,6 +144,8 @@ def parse_account_row(
 
     # Credential reference
     credential_ref = str(get_val("credential_ref") or "").strip()
+    if not validate_credential_ref(credential_ref):
+        return None, f"Row {row_num}: Invalid credential_ref; use an indirect reference such as ENV:NAME."
 
     # Notes
     notes = str(get_val("notes") or "").strip()

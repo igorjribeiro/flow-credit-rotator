@@ -12,6 +12,7 @@ from flow_account.models import (
     Strategy,
     SystemState,
     UsageRecord,
+    validate_credential_ref,
 )
 from flow_account.manager import (
     FlowAccountManager,
@@ -30,6 +31,7 @@ __all__ = [
     "Strategy",
     "SystemState",
     "UsageRecord",
+    "validate_credential_ref",
     "FlowAccountError",
     "NoAccountsAvailableError",
     "AccountNotFoundError",

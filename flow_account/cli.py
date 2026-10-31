@@ -16,7 +16,7 @@ from flow_account.manager import (
     AccountNotFoundError,
     InvalidOperationError,
 )
-from flow_account.models import Account, AccountStatus
+from flow_account.models import Account, AccountStatus, validate_credential_ref
 
 
 def _format_table(headers: List[str], rows: List[List[Any]]) -> str:
@@ -44,6 +44,9 @@ def _account_row(acc: Account, is_current: bool = False) -> List[Any]:
     daily_str = f"{acc.used_today}/{acc.daily_limit}"
     monthly_str = f"{acc.used_month}/{acc.monthly_limit}" if acc.monthly_limit else f"{acc.used_month}/-"
     elig = "YES" if acc.is_eligible else "NO"
+    cred_ref = acc.credential_ref
+    if not validate_credential_ref(cred_ref):
+        cred_ref = "[INVALID CREDENTIAL REF]"
     return [
         acc.id,
         email_display,
@@ -53,7 +56,7 @@ def _account_row(acc: Account, is_current: bool = False) -> List[Any]:
         acc.available_credits,
         acc.priority,
         elig,
-        acc.credential_ref or "-",
+        cred_ref or "-",
     ]
 
 
@@ -226,7 +229,10 @@ def main(args: Optional[List[str]] = None) -> int:
                     if curr.monthly_limit:
                         print(f"  Used Month:        {curr.used_month} / {curr.monthly_limit}")
                     print(f"  Available Credits: {curr.available_credits}")
-                    print(f"  Credential Ref:    {curr.credential_ref or '(none)'}")
+                    safe_ref = curr.credential_ref
+                    if not validate_credential_ref(safe_ref):
+                        safe_ref = "[INVALID CREDENTIAL REF]"
+                    print(f"  Credential Ref:    {safe_ref or '(none)'}")
                 else:
                     print("No active/eligible account currently selected.")
             return 0
@@ -380,8 +386,10 @@ def main(args: Optional[List[str]] = None) -> int:
         elif parsed.command == "history":
             acc_id = None
             if parsed.account:
-                # Find account ID if email or id given
-                target = manager.select_account(parsed.account)
+                # Find account ID without mutating current active account
+                target = manager.get_account(parsed.account)
+                if not target:
+                    raise AccountNotFoundError(f"Account '{parsed.account}' not found.")
                 acc_id = target.id
             records = manager.history(limit=parsed.limit, account_id=acc_id)
             if parsed.json:

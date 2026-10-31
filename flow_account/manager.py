@@ -18,6 +18,7 @@ from flow_account.models import (
     Strategy,
     SystemState,
     UsageRecord,
+    validate_credential_ref,
 )
 from flow_account.reset import (
     check_and_apply_reset,
@@ -266,6 +267,12 @@ class FlowAccountManager:
             self._save_system_state(conn, state)
             return next_acc
 
+    def get_account(self, account_id_or_email: Union[int, str]) -> Optional[Account]:
+        """Look up an account without modifying system state or active selection."""
+        with self.db.transaction() as conn:
+            check_and_apply_reset(conn)
+            return self._find_account(conn, account_id_or_email)
+
     def select_account(self, account_id_or_email: Union[int, str]) -> Account:
         """Select a specific account as current."""
         with self.db.transaction() as conn:
@@ -438,31 +445,54 @@ class FlowAccountManager:
         self,
         account_id_or_email: Union[int, str],
         daily_limit: int,
-        monthly_limit: Optional[int] = None,
+        monthly_limit: Union[int, None, object] = ...,
+        clear_monthly: bool = False,
     ) -> Account:
         """Update credit limits for a specific account.
 
-        Reactivates EXHAUSTED accounts if new limits provide headroom.
+        Preserves an existing monthly limit unless explicitly cleared or replaced.
         """
         if not isinstance(daily_limit, int) or daily_limit <= 0:
             raise ValueError("Daily limit must be a positive integer.")
-        if monthly_limit is not None and (not isinstance(monthly_limit, int) or monthly_limit <= 0):
-            monthly_limit = None
 
         with self.db.transaction() as conn:
             acc = self._find_account(conn, account_id_or_email)
             if not acc:
                 raise AccountNotFoundError(f"Account '{account_id_or_email}' not found.")
 
+            if clear_monthly:
+                effective_monthly = None
+            elif monthly_limit is ...:
+                effective_monthly = acc.monthly_limit
+            elif monthly_limit is None or monthly_limit == 0:
+                effective_monthly = None
+            elif isinstance(monthly_limit, int) and monthly_limit > 0:
+                effective_monthly = monthly_limit
+            else:
+                raise ValueError("Monthly limit must be a positive integer or None.")
+
             state = self._get_system_state(conn)
             now_iso = self._now_iso(state.timezone)
 
             new_status = acc.status
-            # If account was EXHAUSTED and new limits allow usage, re-activate
             if acc.status == AccountStatus.EXHAUSTED:
-                if acc.used_today < daily_limit:
-                    if monthly_limit is None or monthly_limit <= 0 or acc.used_month < monthly_limit:
-                        new_status = AccountStatus.ACTIVE
+                under_daily = acc.used_today < daily_limit
+                under_monthly = (
+                    effective_monthly is None
+                    or effective_monthly <= 0
+                    or acc.used_month < effective_monthly
+                )
+                if under_daily and under_monthly:
+                    new_status = AccountStatus.ACTIVE
+            elif acc.status == AccountStatus.ACTIVE:
+                reached_daily = acc.used_today >= daily_limit
+                reached_monthly = (
+                    effective_monthly is not None
+                    and effective_monthly > 0
+                    and acc.used_month >= effective_monthly
+                )
+                if reached_daily or reached_monthly:
+                    new_status = AccountStatus.EXHAUSTED
 
             conn.execute(
                 """
@@ -470,7 +500,7 @@ class FlowAccountManager:
                 SET daily_limit = ?, monthly_limit = ?, status = ?, updated_at = ?
                 WHERE id = ?;
                 """,
-                (daily_limit, monthly_limit, new_status.value, now_iso, acc.id),
+                (daily_limit, effective_monthly, new_status.value, now_iso, acc.id),
             )
             return self._find_account(conn, acc.id)  # type: ignore
 
@@ -602,6 +632,13 @@ class FlowAccountManager:
         if not clean_email or "@" not in clean_email:
             raise ValueError(f"Invalid email address: '{email}'")
 
+        clean_credential_ref = credential_ref.strip()
+        if not validate_credential_ref(clean_credential_ref):
+            raise ValueError(
+                f"Invalid credential_ref '{credential_ref}'. "
+                "Must be an indirect reference like ENV:VAR, FILE:PATH, VAULT:KEY, OP:ITEM, or empty."
+            )
+
         with self.db.transaction() as conn:
             existing = self._find_account(conn, clean_email)
             if existing:
@@ -651,6 +688,7 @@ class FlowAccountManager:
 
                 if existing:
                     # Update existing account properties
+                    effective_status = rec["status"] if rec.get("status") is not None else existing.status.value
                     conn.execute(
                         """
                         UPDATE accounts
@@ -662,7 +700,7 @@ class FlowAccountManager:
                             rec["daily_limit"],
                             rec["monthly_limit"],
                             rec["priority"],
-                            rec["status"],
+                            effective_status,
                             rec["credential_ref"] or existing.credential_ref,
                             rec["notes"] or existing.notes,
                             now_iso,
@@ -671,6 +709,7 @@ class FlowAccountManager:
                     )
                     updated += 1
                 else:
+                    initial_status = rec["status"] if rec.get("status") is not None else AccountStatus.ACTIVE.value
                     conn.execute(
                         """
                         INSERT INTO accounts (
@@ -685,7 +724,7 @@ class FlowAccountManager:
                             rec["daily_limit"],
                             rec["monthly_limit"],
                             rec["priority"],
-                            rec["status"],
+                            initial_status,
                             rec["notes"],
                             now_iso,
                             now_iso,
