@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flow-account-manager"
+version = "0.1.0"
+description = "Multi-account Google Flow manager with quota tracking, rotation, and credential safety."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "openpyxl>=3.0.0",
+]
+
+[project.scripts]
+flow-account = "flow_account.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["flow_account*"]
