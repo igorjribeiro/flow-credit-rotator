@@ -1,12 +1,12 @@
 """Selection strategies for Flow Credit Rotator.
 
 Implements Sequential (with Priority alias), Round-Robin, Lowest-Usage,
-and Random algorithms with deterministic tie-breaking.
+and Random algorithms with deterministic tie-breaking and capacity-aware filtering.
 """
 
 from abc import ABC, abstractmethod
 import random
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from flow_account.models import Account, AccountStatus, Strategy
 
@@ -23,6 +23,22 @@ def is_account_eligible(account: Account) -> bool:
     return True
 
 
+def has_account_capacity(
+    account: Account,
+    required_cost: int = 0,
+    reserved_map: Optional[Dict[int, int]] = None,
+) -> bool:
+    """Determine if an account is eligible and has capacity for required_cost plus reservations."""
+    pending = reserved_map.get(account.id, 0) if reserved_map and account.id is not None else 0
+    if required_cost > 0:
+        return account.has_capacity(cost=required_cost, pending_reserved=pending)
+    if not account.is_eligible:
+        return False
+    if pending > 0:
+        return account.has_capacity(cost=0, pending_reserved=pending) and (account.available_credits - pending > 0)
+    return True
+
+
 class BaseStrategy(ABC):
     """Abstract base class for account selection strategies."""
 
@@ -35,14 +51,18 @@ class BaseStrategy(ABC):
         current_account_id: Optional[int] = None,
         force_advance: bool = False,
         current_account: Optional[Account] = None,
+        required_cost: int = 0,
+        reserved_map: Optional[Dict[int, int]] = None,
     ) -> Optional[Account]:
-        """Select an account from the eligible list.
+        """Select an account from the eligible list with capacity for required_cost.
 
         :param eligible_accounts: List of currently eligible accounts.
         :param current_account_id: ID of the currently selected account, if any.
         :param force_advance: Whether to explicitly advance to the next account.
         :param current_account: Currently selected Account entity, if available.
-        :return: Selected Account, or None if no accounts are eligible.
+        :param required_cost: Pre-check cost in credits required for the operation.
+        :param reserved_map: Mapping of account_id to active pending reserved credits.
+        :return: Selected Account, or None if no accounts are eligible with capacity.
         """
         pass
 
@@ -50,14 +70,12 @@ class BaseStrategy(ABC):
 class SequentialStrategy(BaseStrategy):
     """Sequential Strategy: cycles accounts in order of priority and registration.
 
-    Follows the deterministic sequence defined at registration/import (priority, id):
+    Follows deterministic sequence (priority, id):
     1 -> 2 -> 3 -> ...
-    - Keeps using Account 1 while it is available and eligible.
-    - If Account 1 reaches daily/monthly limit or becomes unavailable (DISABLED, NEEDS_HUMAN),
-      advances to Account 2.
-    - If Account 2 reaches limit, advances to Account 3.
-    - On reaching the end of the sequence, wraps back to the first eligible account.
-    - Accounts that are DISABLED, NEEDS_HUMAN, or exhausted are skipped during auto-rotation.
+    - Keeps using current account while it has capacity for required_cost.
+    - If current account lacks capacity or reaches limit, advances to next account with capacity.
+    - Wraps around to the first eligible account with capacity.
+    - Accounts that are DISABLED, NEEDS_HUMAN, ARCHIVED, or lack capacity are skipped.
     """
 
     name = Strategy.SEQUENTIAL.value
@@ -68,39 +86,49 @@ class SequentialStrategy(BaseStrategy):
         current_account_id: Optional[int] = None,
         force_advance: bool = False,
         current_account: Optional[Account] = None,
+        required_cost: int = 0,
+        reserved_map: Optional[Dict[int, int]] = None,
     ) -> Optional[Account]:
         if not eligible_accounts:
             return None
 
+        # Filter strictly by capacity for required_cost
+        candidates = [
+            acc for acc in eligible_accounts
+            if has_account_capacity(acc, required_cost=required_cost, reserved_map=reserved_map)
+        ]
+        if not candidates:
+            return None
+
         # Deterministic ordering by priority, then ID
         ordered = sorted(
-            eligible_accounts,
+            candidates,
             key=lambda a: (a.priority, a.id or 0),
         )
 
-        # If no current account is set, start at the first eligible account
+        # If no current account is set, start at the first candidate with capacity
         if current_account_id is None:
             return ordered[0]
 
-        # Check if current account is in the eligible list
-        curr_in_eligible = None
+        # Check if current account is in candidates
+        curr_in_candidates = None
         for i, acc in enumerate(ordered):
             if acc.id == current_account_id:
-                curr_in_eligible = (i, acc)
+                curr_in_candidates = (i, acc)
                 break
 
-        if curr_in_eligible is not None:
-            idx, acc = curr_in_eligible
+        if curr_in_candidates is not None:
+            idx, acc = curr_in_candidates
             if not force_advance:
-                # Account is still eligible: keep using it ("Conta 1 disponível -> usa conta 1")
+                # Account still has capacity: keep using it
                 return acc
             else:
-                # Explicit rotation request (e.g. next_account()): advance to next in sequence
+                # Explicit rotation request: advance to next in sequence
                 next_idx = (idx + 1) % len(ordered)
                 return ordered[next_idx]
 
-        # Current account is NOT eligible (exhausted, disabled, needs_human, etc.)
-        # Find the next eligible account after current_account in the sequence
+        # Current account lacks capacity, is exhausted, or not in candidate list
+        # Find the next candidate with capacity after current_account in sequence
         if current_account is not None:
             curr_ref = (current_account.priority, current_account.id or 0)
             after = [acc for acc in ordered if (acc.priority, acc.id or 0) > curr_ref]
@@ -110,7 +138,7 @@ class SequentialStrategy(BaseStrategy):
         if after:
             return after[0]
 
-        # Reached the end of the sequence: wrap back to the first eligible account
+        # Reached the end: wrap back to the first candidate with capacity
         return ordered[0]
 
 
@@ -121,7 +149,7 @@ class PriorityStrategy(SequentialStrategy):
 
 
 class RoundRobinStrategy(BaseStrategy):
-    """Round-Robin Strategy: cycles sequentially across eligible accounts.
+    """Round-Robin Strategy: cycles sequentially across eligible accounts with capacity.
 
     Sorted by ID for a stable, predictable sequence.
     """
@@ -134,12 +162,21 @@ class RoundRobinStrategy(BaseStrategy):
         current_account_id: Optional[int] = None,
         force_advance: bool = False,
         current_account: Optional[Account] = None,
+        required_cost: int = 0,
+        reserved_map: Optional[Dict[int, int]] = None,
     ) -> Optional[Account]:
         if not eligible_accounts:
             return None
 
+        candidates = [
+            acc for acc in eligible_accounts
+            if has_account_capacity(acc, required_cost=required_cost, reserved_map=reserved_map)
+        ]
+        if not candidates:
+            return None
+
         # Deterministic ordering by ID
-        ordered = sorted(eligible_accounts, key=lambda a: (a.id or 0))
+        ordered = sorted(candidates, key=lambda a: (a.id or 0))
 
         if current_account_id is None:
             return ordered[0]
@@ -152,7 +189,6 @@ class RoundRobinStrategy(BaseStrategy):
                 break
 
         if current_idx is None:
-            # Current account was exhausted or not in eligible list
             if current_account_id is not None:
                 after = [acc for acc in ordered if (acc.id or 0) > current_account_id]
                 if after:
@@ -163,15 +199,15 @@ class RoundRobinStrategy(BaseStrategy):
             next_idx = (current_idx + 1) % len(ordered)
             return ordered[next_idx]
 
-        # If not force_advance and current account is eligible, keep it
+        # If not force_advance and current account has capacity, keep it
         return ordered[current_idx]
 
 
 class LowestUsageStrategy(BaseStrategy):
-    """Lowest-Usage Strategy: chooses account with lowest used_today.
+    """Lowest-Usage Strategy: chooses account with lowest used_today (including reservations).
 
     Tie-breaking:
-    1. used_today (ascending)
+    1. used_today + reserved (ascending)
     2. priority (ascending)
     3. used_month (ascending)
     4. last_used_at (oldest first)
@@ -186,14 +222,23 @@ class LowestUsageStrategy(BaseStrategy):
         current_account_id: Optional[int] = None,
         force_advance: bool = False,
         current_account: Optional[Account] = None,
+        required_cost: int = 0,
+        reserved_map: Optional[Dict[int, int]] = None,
     ) -> Optional[Account]:
         if not eligible_accounts:
             return None
 
+        candidates = [
+            acc for acc in eligible_accounts
+            if has_account_capacity(acc, required_cost=required_cost, reserved_map=reserved_map)
+        ]
+        if not candidates:
+            return None
+
         sorted_accs = sorted(
-            eligible_accounts,
+            candidates,
             key=lambda a: (
-                a.used_today,
+                a.used_today + (reserved_map.get(a.id, 0) if reserved_map and a.id else 0),
                 a.priority,
                 a.used_month,
                 a.last_used_at if a.last_used_at else "",
@@ -214,11 +259,10 @@ class LowestUsageStrategy(BaseStrategy):
 
 
 class RandomStrategy(BaseStrategy):
-    """Random Strategy: selects uniformly at random among eligible accounts.
+    """Random Strategy: selects uniformly at random among eligible accounts with capacity.
 
-    Only accounts that are strictly eligible (status ACTIVE, available daily
-    and monthly credits) are candidates for selection. Never selects blocked,
-    disabled, NEEDS_HUMAN, or zero-credit accounts.
+    Only accounts that are strictly eligible and have sufficient capacity for
+    required_cost are candidates for selection.
     """
 
     name = Strategy.RANDOM.value
@@ -229,12 +273,17 @@ class RandomStrategy(BaseStrategy):
         current_account_id: Optional[int] = None,
         force_advance: bool = False,
         current_account: Optional[Account] = None,
+        required_cost: int = 0,
+        reserved_map: Optional[Dict[int, int]] = None,
     ) -> Optional[Account]:
         if not eligible_accounts:
             return None
 
-        # Filter strictly eligible
-        candidates = [acc for acc in eligible_accounts if acc.is_eligible]
+        # Filter strictly eligible with capacity
+        candidates = [
+            acc for acc in eligible_accounts
+            if has_account_capacity(acc, required_cost=required_cost, reserved_map=reserved_map)
+        ]
         if not candidates:
             return None
 

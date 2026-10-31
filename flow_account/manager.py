@@ -3,18 +3,21 @@
 Orchestrates account rotation, credit tracking, limits, persistence, and audit logging.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple, Union
+import uuid
 
 from flow_account.config import get_timezone
 from flow_account.db import Database
-from flow_account.importer import read_accounts_from_file
+from flow_account.importer import read_accounts_from_file, read_central_config_xlsx
 from flow_account.models import (
     Account,
     AccountStatus,
     Mode,
+    Reservation,
+    ReservationStatus,
     Strategy,
     SystemState,
     UsageRecord,
@@ -26,7 +29,7 @@ from flow_account.reset import (
     reset_daily as db_reset_daily,
     reset_monthly as db_reset_monthly,
 )
-from flow_account.strategies import get_strategy
+from flow_account.strategies import get_strategy, has_account_capacity
 
 
 class FlowAccountError(Exception):
@@ -145,14 +148,49 @@ class FlowAccountManager:
         all_accs = self._get_all_accounts(conn)
         return [acc for acc in all_accs if acc.is_eligible]
 
+    def _row_to_reservation(self, row: sqlite3.Row) -> Reservation:
+        """Convert a database row into a Reservation dataclass."""
+        return Reservation(
+            id=row["id"],
+            account_id=row["account_id"],
+            estimated_cost=row["estimated_cost"],
+            actual_amount=row["actual_amount"],
+            status=ReservationStatus(row["status"]),
+            note=row["note"] or "",
+            created_at=row["created_at"],
+            expires_at=row["expires_at"],
+            committed_at=row["committed_at"],
+            cancelled_at=row["cancelled_at"],
+        )
+
+    def _get_active_reservations_map(
+        self, conn: sqlite3.Connection, now_iso: str
+    ) -> Dict[int, int]:
+        """Auto-expire elapsed reservations and return a mapping of account_id to active pending reserved credits."""
+        conn.execute(
+            "UPDATE reservations SET status = 'EXPIRED' WHERE status = 'PENDING' AND expires_at < ?;",
+            (now_iso,),
+        )
+        cursor = conn.execute(
+            """
+            SELECT account_id, SUM(estimated_cost) as reserved_total
+            FROM reservations
+            WHERE status = 'PENDING'
+            GROUP BY account_id;
+            """
+        )
+        return {r["account_id"]: int(r["reserved_total"]) for r in cursor.fetchall()}
+
     def _select_next_eligible(
         self,
         conn: sqlite3.Connection,
         strategy_name: Union[Strategy, str],
         current_id: Optional[int],
         force_advance: bool = False,
+        required_cost: int = 0,
+        reserved_map: Optional[Dict[int, int]] = None,
     ) -> Optional[Account]:
-        """Select next eligible account based on configured strategy."""
+        """Select next eligible account based on configured strategy and required capacity."""
         eligible = self._get_eligible_accounts(conn)
         if not eligible:
             return None
@@ -163,6 +201,8 @@ class FlowAccountManager:
             current_account_id=current_id,
             force_advance=force_advance,
             current_account=curr_acc,
+            required_cost=required_cost,
+            reserved_map=reserved_map,
         )
 
     # -------------------------------------------------------------------------
@@ -412,6 +452,408 @@ class FlowAccountManager:
                 self._save_system_state(conn, state)
 
             return updated_account, usage_record
+
+    def can_consume(self, cost: int) -> Tuple[bool, Optional[Account], str]:
+        """Pre-check whether an account has capacity for `cost` credits.
+
+        Does not create a reservation or mutate credit counters.
+        In AUTO mode: checks active account; if insufficient, checks if another account can take it.
+        In MANUAL mode: checks currently pinned account only.
+        :return: (can_execute, selected_account, explanation)
+        """
+        if not isinstance(cost, int) or cost <= 0:
+            raise ValueError("Credit cost must be a positive integer.")
+
+        with self.db.transaction() as conn:
+            check_and_apply_reset(conn)
+            state = self._get_system_state(conn)
+            now_iso = self._now_iso(state.timezone)
+            reserved_map = self._get_active_reservations_map(conn, now_iso)
+
+            curr_acc: Optional[Account] = None
+            if state.current_account_id:
+                curr_acc = self._find_account(conn, state.current_account_id)
+
+            if state.mode == Mode.MANUAL:
+                if curr_acc is None:
+                    return False, None, "MANUAL mode: No account currently selected."
+                if not curr_acc.is_eligible:
+                    return False, curr_acc, f"MANUAL mode: Account '{curr_acc.email}' is not active/eligible."
+                if not curr_acc.has_capacity(cost, reserved_map.get(curr_acc.id or 0, 0)):
+                    avail = curr_acc.available_credits - reserved_map.get(curr_acc.id or 0, 0)
+                    return False, curr_acc, f"MANUAL mode: Account '{curr_acc.email}' lacks capacity (available: {avail}, required: {cost})."
+                return True, curr_acc, f"Account '{curr_acc.email}' has sufficient capacity for {cost} credits."
+
+            # AUTO mode
+            if curr_acc and curr_acc.is_eligible and curr_acc.has_capacity(cost, reserved_map.get(curr_acc.id or 0, 0)):
+                return True, curr_acc, f"Active account '{curr_acc.email}' has sufficient capacity for {cost} credits."
+
+            # Current account cannot take it, check if another eligible account can
+            candidate = self._select_next_eligible(
+                conn, state.strategy, state.current_account_id, force_advance=False,
+                required_cost=cost, reserved_map=reserved_map,
+            )
+            if candidate:
+                return True, candidate, f"AUTO mode: Account '{candidate.email}' selected with sufficient capacity for {cost} credits."
+
+            return False, None, f"NO_ACCOUNTS_AVAILABLE: No accounts in pool have sufficient capacity for {cost} credits."
+
+    def reserve(self, cost: int, note: str = "", ttl_seconds: int = 1800) -> Tuple[Account, Reservation]:
+        """Pre-check capacity and create a PENDING credit reservation.
+
+        In AUTO mode: automatically rotates if current account lacks capacity.
+        In MANUAL mode: verifies current account capacity.
+        Reservation locks estimated credits against concurrency race conditions.
+        :return: (selected_account, reservation)
+        """
+        if not isinstance(cost, int) or cost <= 0:
+            raise ValueError("Credit cost to reserve must be a positive integer.")
+
+        with self.db.transaction() as conn:
+            check_and_apply_reset(conn)
+            state = self._get_system_state(conn)
+            now_iso = self._now_iso(state.timezone)
+            reserved_map = self._get_active_reservations_map(conn, now_iso)
+
+            curr_acc: Optional[Account] = None
+            if state.current_account_id:
+                curr_acc = self._find_account(conn, state.current_account_id)
+
+            target_acc: Optional[Account] = None
+
+            if state.mode == Mode.MANUAL:
+                if curr_acc is None:
+                    raise InvalidOperationError("MANUAL mode: No account currently selected.")
+                if not curr_acc.is_eligible:
+                    raise InvalidOperationError(f"MANUAL mode: Account '{curr_acc.email}' is not active/eligible.")
+                if not curr_acc.has_capacity(cost, reserved_map.get(curr_acc.id or 0, 0)):
+                    avail = curr_acc.available_credits - reserved_map.get(curr_acc.id or 0, 0)
+                    raise InvalidOperationError(
+                        f"MANUAL mode: Account '{curr_acc.email}' has insufficient capacity "
+                        f"(available: {avail}, required: {cost})."
+                    )
+                target_acc = curr_acc
+            else:
+                # AUTO mode
+                if curr_acc and curr_acc.is_eligible and curr_acc.has_capacity(cost, reserved_map.get(curr_acc.id or 0, 0)):
+                    target_acc = curr_acc
+                else:
+                    target_acc = self._select_next_eligible(
+                        conn, state.strategy, state.current_account_id, force_advance=False,
+                        required_cost=cost, reserved_map=reserved_map,
+                    )
+                    if target_acc is None:
+                        raise NoAccountsAvailableError(
+                            f"NO_ACCOUNTS_AVAILABLE: No accounts have sufficient capacity for {cost} credits."
+                        )
+                    state.current_account_id = target_acc.id
+                    self._save_system_state(conn, state)
+
+            res_id = f"res_{uuid.uuid4().hex[:12]}"
+            dt_now = datetime.fromisoformat(now_iso)
+            expires_at = (dt_now + timedelta(seconds=ttl_seconds)).isoformat()
+
+            conn.execute(
+                """
+                INSERT INTO reservations (
+                    id, account_id, estimated_cost, status, note, created_at, expires_at
+                ) VALUES (?, ?, ?, 'PENDING', ?, ?, ?);
+                """,
+                (res_id, target_acc.id, cost, note, now_iso, expires_at),
+            )
+
+            reservation = Reservation(
+                id=res_id,
+                account_id=target_acc.id,  # type: ignore
+                estimated_cost=cost,
+                actual_amount=None,
+                status=ReservationStatus.PENDING,
+                note=note,
+                created_at=now_iso,
+                expires_at=expires_at,
+                committed_at=None,
+                cancelled_at=None,
+                account_email=target_acc.email,
+            )
+            return target_acc, reservation
+
+    def confirm_reservation(
+        self, reservation_id: str, actual_amount: Optional[int] = None, note: str = ""
+    ) -> Tuple[Account, UsageRecord]:
+        """Confirm (commit) a pending reservation, debiting actual credits to usage history."""
+        if not reservation_id or not isinstance(reservation_id, str):
+            raise ValueError("A valid reservation_id string is required.")
+
+        with self.db.transaction() as conn:
+            check_and_apply_reset(conn)
+            state = self._get_system_state(conn)
+            now_iso = self._now_iso(state.timezone)
+
+            row = conn.execute("SELECT * FROM reservations WHERE id = ?;", (reservation_id.strip(),)).fetchone()
+            if not row:
+                raise ValueError(f"Reservation '{reservation_id}' not found.")
+
+            res = self._row_to_reservation(row)
+            if res.status != ReservationStatus.PENDING:
+                raise InvalidOperationError(f"Reservation '{reservation_id}' is already {res.status.value}.")
+
+            if res.expires_at < now_iso:
+                conn.execute("UPDATE reservations SET status = 'EXPIRED' WHERE id = ?;", (res.id,))
+                raise InvalidOperationError(f"Reservation '{reservation_id}' has expired.")
+
+            charge_amount = actual_amount if actual_amount is not None else res.estimated_cost
+            if not isinstance(charge_amount, int) or charge_amount < 0:
+                raise ValueError("Actual amount to charge must be a non-negative integer.")
+
+            acc = self._find_account(conn, res.account_id)
+            if not acc:
+                raise AccountNotFoundError(f"Account associated with reservation #{res.account_id} not found.")
+
+            used_today_after = acc.used_today + charge_amount
+            used_month_after = acc.used_month + charge_amount
+
+            new_status = acc.status
+            if used_today_after >= acc.daily_limit:
+                new_status = AccountStatus.EXHAUSTED
+            elif acc.monthly_limit is not None and acc.monthly_limit > 0 and used_month_after >= acc.monthly_limit:
+                new_status = AccountStatus.EXHAUSTED
+
+            conn.execute(
+                """
+                UPDATE accounts
+                SET used_today = ?, used_month = ?, status = ?,
+                    last_used_at = ?, updated_at = ?
+                WHERE id = ?;
+                """,
+                (used_today_after, used_month_after, new_status.value, now_iso, now_iso, acc.id),
+            )
+
+            effective_note = note or res.note or f"Confirmed reservation {res.id}"
+            cursor = conn.execute(
+                """
+                INSERT INTO usage_history (
+                    account_id, amount, used_today_after, used_month_after, mode, note, timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?);
+                """,
+                (
+                    acc.id,
+                    charge_amount,
+                    used_today_after,
+                    used_month_after,
+                    state.mode.value,
+                    effective_note,
+                    now_iso,
+                ),
+            )
+            history_id = cursor.lastrowid
+
+            conn.execute(
+                """
+                UPDATE reservations
+                SET status = 'COMMITTED', actual_amount = ?, committed_at = ?, note = ?
+                WHERE id = ?;
+                """,
+                (charge_amount, now_iso, effective_note, res.id),
+            )
+
+            updated_account = Account(
+                id=acc.id,
+                email=acc.email,
+                credential_ref=acc.credential_ref,
+                daily_limit=acc.daily_limit,
+                monthly_limit=acc.monthly_limit,
+                used_today=used_today_after,
+                used_month=used_month_after,
+                priority=acc.priority,
+                status=new_status,
+                last_used_at=now_iso,
+                notes=acc.notes,
+                created_at=acc.created_at,
+                updated_at=now_iso,
+            )
+
+            usage_record = UsageRecord(
+                id=history_id,
+                account_id=acc.id,  # type: ignore
+                amount=charge_amount,
+                used_today_after=used_today_after,
+                used_month_after=used_month_after,
+                mode=state.mode.value,
+                note=effective_note,
+                timestamp=now_iso,
+            )
+
+            # In AUTO mode, if account became EXHAUSTED, rotate to next eligible immediately
+            if state.mode == Mode.AUTO and new_status == AccountStatus.EXHAUSTED:
+                next_acc = self._select_next_eligible(
+                    conn, state.strategy, current_id=acc.id, force_advance=False
+                )
+                state.current_account_id = next_acc.id if next_acc else None
+                self._save_system_state(conn, state)
+
+            return updated_account, usage_record
+
+    def cancel_reservation(self, reservation_id: str, reason: str = "") -> Reservation:
+        """Cancel a pending reservation, releasing reserved capacity without deducting credits."""
+        if not reservation_id or not isinstance(reservation_id, str):
+            raise ValueError("A valid reservation_id string is required.")
+
+        with self.db.transaction() as conn:
+            check_and_apply_reset(conn)
+            state = self._get_system_state(conn)
+            now_iso = self._now_iso(state.timezone)
+
+            row = conn.execute("SELECT * FROM reservations WHERE id = ?;", (reservation_id.strip(),)).fetchone()
+            if not row:
+                raise ValueError(f"Reservation '{reservation_id}' not found.")
+
+            res = self._row_to_reservation(row)
+            if res.status != ReservationStatus.PENDING:
+                raise InvalidOperationError(f"Reservation '{reservation_id}' is already {res.status.value}.")
+
+            note = reason or res.note
+            conn.execute(
+                """
+                UPDATE reservations
+                SET status = 'CANCELLED', cancelled_at = ?, note = ?
+                WHERE id = ?;
+                """,
+                (now_iso, note, res.id),
+            )
+            res.status = ReservationStatus.CANCELLED
+            res.cancelled_at = now_iso
+            res.note = note
+            return res
+
+    def list_reservations(self, status: Optional[str] = None, limit: int = 50) -> List[Reservation]:
+        """List recent reservations, optionally filtered by status."""
+        with self.db.transaction() as conn:
+            check_and_apply_reset(conn)
+            state = self._get_system_state(conn)
+            now_iso = self._now_iso(state.timezone)
+            self._get_active_reservations_map(conn, now_iso)
+
+            query = "SELECT r.*, a.email as account_email FROM reservations r JOIN accounts a ON r.account_id = a.id"
+            params = []
+            if status:
+                query += " WHERE r.status = ?"
+                params.append(status.strip().upper())
+            query += " ORDER BY r.created_at DESC LIMIT ?;"
+            params.append(max(1, limit))
+
+            rows = conn.execute(query, tuple(params)).fetchall()
+            reservations = []
+            for r in rows:
+                res = self._row_to_reservation(r)
+                res.account_email = r["account_email"]
+                reservations.append(res)
+            return reservations
+
+    def sync(self, xlsx_path: str = "config/flow_accounts.xlsx") -> Dict[str, Any]:
+        """Synchronize accounts and system settings from central XLSX configuration."""
+        records, settings_dict, errors = read_central_config_xlsx(xlsx_path)
+
+        with self.db.transaction() as conn:
+            check_and_apply_reset(conn)
+            state = self._get_system_state(conn)
+            now_iso = self._now_iso(state.timezone)
+
+            # 1. Update settings if specified in SETTINGS sheet
+            if "strategy" in settings_dict:
+                state.strategy = Strategy(settings_dict["strategy"])
+            if "default_daily_limit" in settings_dict:
+                state.default_daily_limit = settings_dict["default_daily_limit"]
+            if "timezone" in settings_dict:
+                state.timezone = settings_dict["timezone"]
+            if "mode" in settings_dict:
+                state.mode = Mode(settings_dict["mode"])
+            self._save_system_state(conn, state)
+
+            # 2. Synchronize accounts
+            existing_rows = conn.execute("SELECT * FROM accounts;").fetchall()
+            existing_map = {r["email"].lower(): self._row_to_account(r) for r in existing_rows}
+            seen_emails = set()
+
+            added = 0
+            updated = 0
+            disabled = 0
+
+            for rec in records:
+                email = rec["email"].lower()
+                seen_emails.add(email)
+                enabled = rec.get("enabled", True)
+
+                if email in existing_map:
+                    current_acc = existing_map[email]
+                    # Determine new status:
+                    if not enabled:
+                        new_status = AccountStatus.DISABLED.value
+                    elif enabled and current_acc.status == AccountStatus.DISABLED:
+                        new_status = AccountStatus.ACTIVE.value
+                    else:
+                        new_status = current_acc.status.value
+
+                    conn.execute(
+                        """
+                        UPDATE accounts
+                        SET priority = ?, daily_limit = ?, monthly_limit = ?,
+                            credential_ref = ?, notes = ?, status = ?, updated_at = ?
+                        WHERE id = ?;
+                        """,
+                        (
+                            rec["priority"],
+                            rec["daily_limit"],
+                            rec["monthly_limit"],
+                            rec["credential_ref"],
+                            rec["notes"],
+                            new_status,
+                            now_iso,
+                            current_acc.id,
+                        ),
+                    )
+                    updated += 1
+                else:
+                    initial_status = AccountStatus.ACTIVE.value if enabled else AccountStatus.DISABLED.value
+                    conn.execute(
+                        """
+                        INSERT INTO accounts (
+                            email, credential_ref, daily_limit, monthly_limit,
+                            used_today, used_month, priority, status,
+                            last_used_at, notes, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, 0, 0, ?, ?, NULL, ?, ?, ?);
+                        """,
+                        (
+                            rec["email"],
+                            rec["credential_ref"],
+                            rec["daily_limit"],
+                            rec["monthly_limit"],
+                            rec["priority"],
+                            initial_status,
+                            rec["notes"],
+                            now_iso,
+                            now_iso,
+                        ),
+                    )
+                    added += 1
+
+            # 3. Archive / disable accounts that disappeared from XLSX without destroying history
+            for email, current_acc in existing_map.items():
+                if email not in seen_emails:
+                    if current_acc.status not in (AccountStatus.DISABLED, AccountStatus.ARCHIVED):
+                        conn.execute(
+                            "UPDATE accounts SET status = 'DISABLED', updated_at = ? WHERE id = ?;",
+                            (now_iso, current_acc.id),
+                        )
+                        disabled += 1
+
+            return {
+                "added": added,
+                "updated": updated,
+                "disabled": disabled,
+                "total_in_sheet": len(seen_emails),
+                "settings": settings_dict,
+                "errors": errors,
+            }
 
     def set_mode(self, mode: Union[Mode, str]) -> Mode:
         """Set operation mode (AUTO or MANUAL)."""

@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-10-31
+
+### Added
+- **Credit Pre-Check & Reservation System**:
+  - Implemented `used_today + active_reservations + cost <= daily_limit` capacity checking.
+  - `flow-account can-consume <amount>`: dry-run pre-check determining if current or standby accounts can execute.
+  - `flow-account reserve <amount>`: creates an atomic PENDING reservation locking capacity to prevent double-spending in parallel workers.
+  - `flow-account reserve-confirm <id>` (alias: `commit`): debits real consumption upon successful job completion.
+  - `flow-account reserve-cancel <id>` (alias: `cancel`): releases reserved capacity upon failure without debiting credits.
+  - `flow-account reservations`: inspects active and historical reservations.
+  - Automatic expiration (TTL) for abandoned reservations.
+- **Central XLSX Configuration (`config/flow_accounts.xlsx`)**:
+  - Multi-tab configuration workbook with `ACCOUNTS` and `SETTINGS` sheets.
+  - Dynamic user-driven account pool editing (orders, limits, enabled status, references, notes).
+  - Configurable rotation strategy (`sequential` or `random`), default daily limit, timezone, and auto-rotate mode.
+  - `flow-account sync [config/flow_accounts.xlsx]`: synchronizes spreadsheet with the SQLite database.
+  - Disappearing accounts are safely marked as `DISABLED`/`ARCHIVED` without destroying historical consumption logs.
+- **Secure Keyring Credential Storage**:
+  - Integrated `keyring` support for Linux SecretService / macOS Keychain / Windows Credential Manager.
+  - `flow-account credential set <email_or_ref>`: interactive hidden prompt storing passwords securely.
+  - `flow-account credential test <email_or_ref>`: verifies credential presence without exposing secret values.
+  - Secured restricted fallback vault (`~/.flow-accounts/.vault_store`, mode 0600) for headless servers.
+- **Agent Operational Governance**:
+  - Strict 7-step mandatory agent workflow documented in `SKILL.md` enforcing pre-checks before launching any generation in Google Flow.
+- **Test Coverage**:
+  - Added `tests/test_v110_features.py` covering all 20 required criteria. Test suite expanded to 121 comprehensive tests passing with 100% success.
+
 ## [1.0.0] - 2026-10-31
 
 ### Added

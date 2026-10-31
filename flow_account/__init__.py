@@ -3,12 +3,14 @@
 Multi-account credit rotation and quota manager for Google Flow automation agents.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 from flow_account.models import (
     Account,
     AccountStatus,
     Mode,
+    Reservation,
+    ReservationStatus,
     Strategy,
     SystemState,
     UsageRecord,
@@ -21,6 +23,11 @@ from flow_account.manager import (
     AccountNotFoundError,
     InvalidOperationError,
 )
+from flow_account.credentials import (
+    get_credential,
+    set_credential,
+    has_credential,
+)
 
 __all__ = [
     "__version__",
@@ -28,6 +35,8 @@ __all__ = [
     "Account",
     "AccountStatus",
     "Mode",
+    "Reservation",
+    "ReservationStatus",
     "Strategy",
     "SystemState",
     "UsageRecord",
@@ -36,4 +45,7 @@ __all__ = [
     "NoAccountsAvailableError",
     "AccountNotFoundError",
     "InvalidOperationError",
+    "get_credential",
+    "set_credential",
+    "has_credential",
 ]

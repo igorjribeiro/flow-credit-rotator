@@ -1,18 +1,31 @@
-"""Account importer supporting CSV and XLSX formats.
+"""Account importer supporting CSV, XLSX, and central XLSX synchronization.
 
 Enforces strict security policies: rejects raw credentials or secret columns,
-validating input against schema requirements.
+validating input against schema requirements. Secrets are never accepted.
 """
 
 import csv
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import openpyxl
 
-from flow_account.models import AccountStatus, validate_credential_ref
+from flow_account.config import (
+    DEFAULT_DAILY_LIMIT,
+    VALID_MODES,
+    VALID_STRATEGIES,
+    get_default_daily_limit,
+    get_default_timezone_name,
+)
+from flow_account.models import (
+    Account,
+    AccountStatus,
+    Mode,
+    Strategy,
+    validate_credential_ref,
+)
 
 FORBIDDEN_COLUMNS = {
     "password",
@@ -31,7 +44,9 @@ VALID_COLUMNS = {
     "daily_limit",
     "monthly_limit",
     "priority",
+    "order",
     "status",
+    "enabled",
     "credential_ref",
     "notes",
 }
@@ -51,7 +66,10 @@ def validate_column_names(headers: List[str]) -> Dict[str, int]:
     :return: Mapping of normalized column name to header index.
     """
     column_map = {}
-    normalized_headers = [str(h).strip().lower().replace(" ", "_").replace("-", "_") if h is not None else "" for h in headers]
+    normalized_headers = [
+        str(h).strip().lower().replace(" ", "_").replace("-", "_") if h is not None else ""
+        for h in headers
+    ]
 
     for idx, col in enumerate(normalized_headers):
         if not col:
@@ -121,8 +139,8 @@ def parse_account_row(
         except (ValueError, TypeError):
             return None, f"Row {row_num}: Invalid monthly_limit '{monthly_limit_val}'"
 
-    # Priority
-    priority_val = get_val("priority")
+    # Priority / Order
+    priority_val = get_val("order") or get_val("priority")
     priority = 1
     if priority_val is not None:
         try:
@@ -130,22 +148,34 @@ def parse_account_row(
             if priority < 1:
                 priority = 1
         except (ValueError, TypeError):
-            return None, f"Row {row_num}: Invalid priority '{priority_val}'"
+            return None, f"Row {row_num}: Invalid priority/order '{priority_val}'"
 
-    # Status
+    # Enabled / Status
+    enabled_val = get_val("enabled")
     status_val = get_val("status")
     status = None
-    if status_val is not None:
+    enabled_flag = True
+
+    if enabled_val is not None:
+        clean_en = str(enabled_val).strip().upper()
+        if clean_en in {"NO", "FALSE", "0", "N", "DISABLED"}:
+            enabled_flag = False
+            status = AccountStatus.DISABLED.value
+        elif clean_en in {"YES", "TRUE", "1", "Y", "ACTIVE"}:
+            enabled_flag = True
+            status = AccountStatus.ACTIVE.value
+
+    if status_val is not None and status is None:
         status_clean = str(status_val).strip().upper()
         if status_clean in {s.value for s in AccountStatus}:
             status = status_clean
         else:
-            return None, f"Row {row_num}: Invalid status '{status_val}'. Valid: ACTIVE, DISABLED, EXHAUSTED, NEEDS_HUMAN"
+            return None, f"Row {row_num}: Invalid status '{status_val}'"
 
     # Credential reference
     credential_ref = str(get_val("credential_ref") or "").strip()
     if not validate_credential_ref(credential_ref):
-        return None, f"Row {row_num}: Invalid credential_ref; use an indirect reference such as ENV:NAME."
+        return None, f"Row {row_num}: Invalid credential_ref; use an indirect reference such as KEYRING:name or ENV:NAME."
 
     # Notes
     notes = str(get_val("notes") or "").strip()
@@ -156,16 +186,14 @@ def parse_account_row(
         "monthly_limit": monthly_limit,
         "priority": priority,
         "status": status,
+        "enabled": enabled_flag,
         "credential_ref": credential_ref,
         "notes": notes,
     }, None
 
 
 def read_accounts_from_file(filepath: str, default_daily_limit: int) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Read and validate rows from CSV or XLSX file.
-
-    :return: (valid_records, error_list)
-    """
+    """Read and validate rows from CSV or XLSX file."""
     path = Path(filepath).resolve()
     if not path.is_file():
         raise FileNotFoundError(f"File not found: {filepath}")
@@ -185,7 +213,7 @@ def read_accounts_from_file(filepath: str, default_daily_limit: int) -> Tuple[Li
 
             for row_idx, row in enumerate(reader, start=2):
                 if not any(bool(cell and str(cell).strip()) for cell in row):
-                    continue  # skip completely blank rows
+                    continue
                 parsed, err = parse_account_row(row, col_map, default_daily_limit, row_idx)
                 if err:
                     errors.append(err)
@@ -194,7 +222,8 @@ def read_accounts_from_file(filepath: str, default_daily_limit: int) -> Tuple[Li
 
     elif ext == ".xlsx":
         wb = openpyxl.load_workbook(filename=str(path), read_only=True, data_only=True)
-        sheet = wb.active
+        # Select ACCOUNTS sheet if present, else active sheet
+        sheet = wb["ACCOUNTS"] if "ACCOUNTS" in wb.sheetnames else wb.active
         rows_iter = sheet.iter_rows(values_only=True)
         try:
             first_row = next(rows_iter)
@@ -218,3 +247,127 @@ def read_accounts_from_file(filepath: str, default_daily_limit: int) -> Tuple[Li
         raise ValueError(f"Unsupported file format '{ext}'. Must be .csv or .xlsx")
 
     return valid_records, errors
+
+
+def read_central_config_xlsx(filepath: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any], List[str]]:
+    """Read central configuration spreadsheet containing ACCOUNTS and SETTINGS sheets.
+
+    :return: (accounts_list, settings_dict, errors)
+    """
+    path = Path(filepath).resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"Configuration spreadsheet not found: {filepath}")
+
+    wb = openpyxl.load_workbook(filename=str(path), read_only=True, data_only=True)
+    accounts_records: List[Dict[str, Any]] = []
+    settings_dict: Dict[str, Any] = {}
+    errors: List[str] = []
+
+    # 1. Read SETTINGS sheet if present
+    if "SETTINGS" in wb.sheetnames:
+        settings_sheet = wb["SETTINGS"]
+        for row in settings_sheet.iter_rows(values_only=True):
+            if not row or len(row) < 2:
+                continue
+            k_raw, v_raw = row[0], row[1]
+            if k_raw is None or v_raw is None:
+                continue
+            key = str(k_raw).strip().lower().replace(" ", "_").replace("-", "_")
+            val = str(v_raw).strip()
+            if not key or key == "setting":
+                continue
+
+            if key in {"rotation_strategy", "strategy"}:
+                strat = val.lower()
+                if strat in VALID_STRATEGIES:
+                    settings_dict["strategy"] = strat
+            elif key in {"default_daily_limit", "daily_limit"}:
+                try:
+                    limit_val = int(float(val))
+                    if limit_val > 0:
+                        settings_dict["default_daily_limit"] = limit_val
+                except (ValueError, TypeError):
+                    pass
+            elif key in {"default_monthly_limit", "monthly_limit"}:
+                try:
+                    limit_val = int(float(val))
+                    if limit_val > 0:
+                        settings_dict["default_monthly_limit"] = limit_val
+                except (ValueError, TypeError):
+                    pass
+            elif key in {"timezone", "tz"}:
+                settings_dict["timezone"] = val
+            elif key in {"auto_rotate", "auto_mode", "mode"}:
+                if val.upper() in {"YES", "TRUE", "1", "AUTO"}:
+                    settings_dict["mode"] = Mode.AUTO.value
+                elif val.upper() in {"NO", "FALSE", "0", "MANUAL"}:
+                    settings_dict["mode"] = Mode.MANUAL.value
+
+    # 2. Read ACCOUNTS sheet
+    sheet = wb["ACCOUNTS"] if "ACCOUNTS" in wb.sheetnames else wb.active
+    if sheet is None:
+        wb.close()
+        raise ValueError("Could not find ACCOUNTS sheet in configuration spreadsheet.")
+    rows_iter = sheet.iter_rows(values_only=True)
+    try:
+        first_row = next(rows_iter)
+    except StopIteration:
+        wb.close()
+        raise ValueError("Empty ACCOUNTS sheet in configuration spreadsheet.")
+
+    headers = [str(c) if c is not None else "" for c in first_row] if first_row else []
+    col_map = validate_column_names(headers)
+    default_daily = settings_dict.get("default_daily_limit", get_default_daily_limit())
+
+    for row_idx, row in enumerate(rows_iter, start=2):
+        if not row or not any(c is not None and str(c).strip() != "" for c in row):
+            continue
+        parsed, err = parse_account_row(list(row), col_map, default_daily, row_idx)
+        if err:
+            errors.append(err)
+        elif parsed:
+            accounts_records.append(parsed)
+
+    wb.close()
+    return accounts_records, settings_dict, errors
+
+
+def create_central_config_template_xlsx(filepath: str) -> None:
+    """Generate a clean, professional template XLSX with ACCOUNTS and SETTINGS sheets."""
+    wb = openpyxl.Workbook()
+
+    # ACCOUNTS sheet
+    ws_acc = wb.active
+    if ws_acc is None:
+        ws_acc = wb.create_sheet(title="ACCOUNTS")
+    else:
+        ws_acc.title = "ACCOUNTS"
+
+    acc_headers = ["order", "email", "daily_limit", "monthly_limit", "enabled", "credential_ref", "notes"]
+    ws_acc.append(acc_headers)
+
+    sample_accounts = [
+        [1, "account01@example.com", 85, 2500, "YES", "KEYRING:flow01", "Primary high-priority production account"],
+        [2, "account02@example.com", 85, 2500, "YES", "KEYRING:flow02", "Secondary rotation production account"],
+        [3, "account03@example.com", 70, 2000, "YES", "KEYRING:flow03", "Reserve overflow account"],
+        [4, "account04@example.com", 85, None, "YES", "ENV:FLOW_ACCOUNT_04", "Overflow account without monthly cap"],
+    ]
+    for row in sample_accounts:
+        ws_acc.append(row)
+
+    # SETTINGS sheet
+    ws_settings = wb.create_sheet(title="SETTINGS")
+    ws_settings.append(["Setting", "Value", "Description"])
+    settings_rows = [
+        ["rotation_strategy", "sequential", "Selection strategy: sequential | random | round-robin | lowest-usage"],
+        ["default_daily_limit", 85, "Default daily credit limit applied to newly registered accounts"],
+        ["default_monthly_limit", 2500, "Optional default monthly credit limit (leave empty if none)"],
+        ["timezone", "America/Bahia", "Timezone for daily and monthly credit rollovers"],
+        ["auto_rotate", "YES", "YES for unattended AUTO mode, NO for pinned MANUAL mode"],
+    ]
+    for row in settings_rows:
+        ws_settings.append(row)
+
+    target_path = Path(filepath).resolve()
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(str(target_path))

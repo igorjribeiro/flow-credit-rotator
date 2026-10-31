@@ -63,10 +63,26 @@ CREATE TABLE IF NOT EXISTS usage_history (
     FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS reservations (
+    id TEXT PRIMARY KEY,
+    account_id INTEGER NOT NULL,
+    estimated_cost INTEGER NOT NULL,
+    actual_amount INTEGER,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    committed_at TEXT,
+    cancelled_at TEXT,
+    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status);
 CREATE INDEX IF NOT EXISTS idx_accounts_priority ON accounts(priority);
 CREATE INDEX IF NOT EXISTS idx_usage_history_account ON usage_history(account_id);
 CREATE INDEX IF NOT EXISTS idx_usage_history_timestamp ON usage_history(timestamp);
+CREATE INDEX IF NOT EXISTS idx_reservations_status ON reservations(status);
+CREATE INDEX IF NOT EXISTS idx_reservations_account ON reservations(account_id);
 """
 
 

@@ -55,6 +55,15 @@ class AccountStatus(str, Enum):
     DISABLED = "DISABLED"
     EXHAUSTED = "EXHAUSTED"
     NEEDS_HUMAN = "NEEDS_HUMAN"
+    ARCHIVED = "ARCHIVED"
+
+
+class ReservationStatus(str, Enum):
+    """Lifecycle status of a credit reservation."""
+    PENDING = "PENDING"
+    COMMITTED = "COMMITTED"
+    CANCELLED = "CANCELLED"
+    EXPIRED = "EXPIRED"
 
 
 class Mode(str, Enum):
@@ -110,6 +119,23 @@ class Account:
                 return False
         return True
 
+    def has_capacity(self, cost: int, pending_reserved: int = 0) -> bool:
+        """Check whether account has capacity for required cost plus pending reservations.
+
+        Verifies used_today + pending_reserved + cost <= daily_limit
+        and used_month + pending_reserved + cost <= monthly_limit (if defined).
+        """
+        if self.status != AccountStatus.ACTIVE:
+            return False
+        if cost < 0 or pending_reserved < 0:
+            return False
+        if (self.used_today + pending_reserved + cost) > self.daily_limit:
+            return False
+        if self.monthly_limit is not None and self.monthly_limit > 0:
+            if (self.used_month + pending_reserved + cost) > self.monthly_limit:
+                return False
+        return True
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert account to a serializable dictionary."""
         d = asdict(self)
@@ -136,6 +162,28 @@ class UsageRecord:
     def to_dict(self) -> Dict[str, Any]:
         """Convert usage record to a dictionary."""
         return asdict(self)
+
+
+@dataclass
+class Reservation:
+    """Represents a pre-check credit reservation."""
+    id: str
+    account_id: int
+    estimated_cost: int
+    actual_amount: Optional[int] = None
+    status: ReservationStatus = ReservationStatus.PENDING
+    note: str = ""
+    created_at: str = ""
+    expires_at: str = ""
+    committed_at: Optional[str] = None
+    cancelled_at: Optional[str] = None
+    account_email: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert reservation to a dictionary."""
+        d = asdict(self)
+        d["status"] = self.status.value if isinstance(self.status, ReservationStatus) else self.status
+        return d
 
 
 @dataclass

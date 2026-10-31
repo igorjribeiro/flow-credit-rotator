@@ -1,20 +1,22 @@
 """Command-line interface for Flow Credit Rotator.
 
-Provides CLI commands for account rotation, credit management, imports,
-monitoring, and human-in-the-loop workflows.
+Provides CLI commands for account rotation, credit management, pre-checks,
+reservations, central XLSX synchronization, credential isolation, and monitoring.
 """
 
 import argparse
+import getpass
 import json
 import sys
 from typing import Any, List, Optional
 
+from flow_account.credentials import has_credential, set_credential
 from flow_account.manager import (
-    FlowAccountManager,
-    FlowAccountError,
-    NoAccountsAvailableError,
     AccountNotFoundError,
+    FlowAccountError,
+    FlowAccountManager,
     InvalidOperationError,
+    NoAccountsAvailableError,
 )
 from flow_account.models import Account, AccountStatus, validate_credential_ref
 
@@ -64,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Construct the command line argument parser."""
     parser = argparse.ArgumentParser(
         prog="flow-account",
-        description="Flow Credit Rotator: Multi-account rotation, quota tracking, and credential isolation.",
+        description="Flow Credit Rotator: Multi-account rotation, quota tracking, pre-checks, and credential safety.",
     )
     parser.add_argument("--db", help="Path to SQLite database file override", default=None)
     parser.add_argument("--json", action="store_true", help="Output responses as JSON")
@@ -82,6 +84,44 @@ def build_parser() -> argparse.ArgumentParser:
 
     # next
     subparsers.add_parser("next", help="Rotate to the next eligible account")
+
+    # can-consume
+    can_p = subparsers.add_parser("can-consume", help="Pre-check capacity for an operation without reserving")
+    can_p.add_argument("amount", type=int, help="Credit amount to check")
+
+    # reserve
+    res_p = subparsers.add_parser("reserve", help="Pre-check capacity and create a credit reservation")
+    res_p.add_argument("amount", type=int, help="Estimated credit cost to reserve")
+    res_p.add_argument("--note", default="", help="Optional audit note or generation job ID")
+    res_p.add_argument("--ttl", type=int, default=1800, help="Reservation TTL in seconds (default: 1800)")
+
+    # reserve-confirm / commit
+    rc_p = subparsers.add_parser("reserve-confirm", aliases=["commit"], help="Confirm reservation and deduct actual credits")
+    rc_p.add_argument("reservation_id", help="Reservation ID (e.g. res_...)")
+    rc_p.add_argument("--amount", type=int, default=None, help="Actual credits consumed (defaults to reserved amount)")
+    rc_p.add_argument("--note", default="", help="Optional audit note")
+
+    # reserve-cancel / cancel
+    rx_p = subparsers.add_parser("reserve-cancel", aliases=["cancel"], help="Cancel a pending reservation without deducting credits")
+    rx_p.add_argument("reservation_id", help="Reservation ID")
+    rx_p.add_argument("--reason", default="", help="Optional cancellation reason")
+
+    # reservations
+    r_list_p = subparsers.add_parser("reservations", help="List recent credit reservations")
+    r_list_p.add_argument("--status", choices=["PENDING", "COMMITTED", "CANCELLED", "EXPIRED", "pending", "committed", "cancelled", "expired"], default=None, help="Filter by status")
+    r_list_p.add_argument("--limit", type=int, default=20, help="Max records to display")
+
+    # sync
+    sync_p = subparsers.add_parser("sync", help="Synchronize accounts and settings from central XLSX spreadsheet")
+    sync_p.add_argument("file", nargs="?", default="config/flow_accounts.xlsx", help="Path to config XLSX (default: config/flow_accounts.xlsx)")
+
+    # credential
+    cred_p = subparsers.add_parser("credential", help="Manage secure credentials for accounts")
+    cred_subs = cred_p.add_subparsers(dest="cred_action", help="Credential action (set, test)")
+    cset_p = cred_subs.add_parser("set", help="Securely set a credential in keyring/vault")
+    cset_p.add_argument("account", help="Account email or reference key")
+    ctest_p = cred_subs.add_parser("test", help="Test if a credential exists")
+    ctest_p.add_argument("account", help="Account email or reference key")
 
     # mode
     mode_p = subparsers.add_parser("mode", help="Get or set rotation mode (AUTO or MANUAL)")
@@ -139,7 +179,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_p.add_argument("--daily", type=int, default=None, help="Daily credit limit")
     add_p.add_argument("--monthly", type=int, default=None, help="Monthly credit limit")
     add_p.add_argument("--priority", type=int, default=1, help="Priority rank (1=highest)")
-    add_p.add_argument("--credential-ref", default="", help="Credential reference (e.g. ENV:FLOW_01)")
+    add_p.add_argument("--credential-ref", default="", help="Credential reference (e.g. KEYRING:flow01, ENV:FLOW_01)")
     add_p.add_argument("--notes", default="", help="Optional account notes")
 
     # strategy
@@ -219,40 +259,166 @@ def main(args: Optional[List[str]] = None) -> int:
             if parsed.json:
                 print(json.dumps([a.to_dict() for a in accounts], indent=2))
             else:
-                headers = ["ID", "Email", "Status", "Daily (Used/Max)", "Monthly (Used/Max)", "Avail", "Prio", "Eligible", "Credential Ref"]
+                headers = ["ID", "Email", "Status", "Daily (Used/Limit)", "Monthly (Used/Limit)", "Avail", "Pri", "Elig", "Credential Ref"]
                 rows = [_account_row(a, is_current=(a.id == curr_id)) for a in accounts]
                 print(_format_table(headers, rows))
-                if curr_id:
-                    print("\n* indicates current active account")
             return 0
 
         elif parsed.command == "current":
-            curr = manager.current_account()
-            if parsed.json:
-                print(json.dumps(curr.to_dict() if curr else None, indent=2))
-            else:
-                if curr:
-                    print(f"Current Account: #{curr.id} {curr.email}")
-                    print(f"  Status:            {curr.status.value}")
-                    print(f"  Used Today:        {curr.used_today} / {curr.daily_limit}")
-                    if curr.monthly_limit:
-                        print(f"  Used Month:        {curr.used_month} / {curr.monthly_limit}")
-                    print(f"  Available Credits: {curr.available_credits}")
-                    safe_ref = curr.credential_ref
-                    if not validate_credential_ref(safe_ref):
-                        safe_ref = "[INVALID CREDENTIAL REF]"
-                    print(f"  Credential Ref:    {safe_ref or '(none)'}")
+            acc = manager.current_account()
+            if acc:
+                if parsed.json:
+                    print(json.dumps(acc.to_dict(), indent=2))
                 else:
-                    print("No active/eligible account currently selected.")
+                    print(f"Current active account: #{acc.id} {acc.email}")
+                    print(f"Status:            {acc.status.value}")
+                    print(f"Available credits: {acc.available_credits}")
+                    print(f"Daily usage:       {acc.used_today}/{acc.daily_limit}")
+                    monthly_str = f"{acc.used_month}/{acc.monthly_limit}" if acc.monthly_limit else f"{acc.used_month}/-"
+                    print(f"Monthly usage:     {monthly_str}")
+                    print(f"Priority:          {acc.priority}")
+                    cred_display = acc.credential_ref if validate_credential_ref(acc.credential_ref) else "[INVALID]"
+                    print(f"Credential Ref:    {cred_display or 'None'}")
+            else:
+                if parsed.json:
+                    print(json.dumps(None))
+                else:
+                    print("No active or eligible account is currently selected.")
             return 0
 
         elif parsed.command == "next":
             acc = manager.next_account()
-            if parsed.json:
-                print(json.dumps(acc.to_dict() if acc else None, indent=2))
+            if acc:
+                if parsed.json:
+                    print(json.dumps(acc.to_dict(), indent=2))
+                else:
+                    print(f"Advanced to next eligible account: #{acc.id} {acc.email} (Available: {acc.available_credits})")
             else:
-                print(f"Rotated to account: #{acc.id} {acc.email} (Priority: {acc.priority}, Avail: {acc.available_credits})")
+                if parsed.json:
+                    print(json.dumps(None))
+                else:
+                    print("No other eligible accounts available to advance to.")
             return 0
+
+        elif parsed.command == "can-consume":
+            can_exec, acc, msg = manager.can_consume(parsed.amount)
+            if parsed.json:
+                print(json.dumps({
+                    "can_consume": can_exec,
+                    "account": acc.to_dict() if acc else None,
+                    "message": msg,
+                }, indent=2))
+            else:
+                status_str = "✓ APPROVED" if can_exec else "✗ REJECTED"
+                print(f"{status_str}: {msg}")
+                if acc:
+                    print(f"Target Account: #{acc.id} {acc.email} (Available credits: {acc.available_credits})")
+            return 0 if can_exec else 1
+
+        elif parsed.command == "reserve":
+            acc, res = manager.reserve(parsed.amount, note=parsed.note, ttl_seconds=parsed.ttl)
+            if parsed.json:
+                print(json.dumps({
+                    "reservation": res.to_dict(),
+                    "account": acc.to_dict(),
+                }, indent=2))
+            else:
+                print("✓ Credit Reservation Created")
+                print(f"Reservation ID:   {res.id}")
+                print(f"Authorized Email: {acc.email} (#{acc.id})")
+                print(f"Reserved Credits: {res.estimated_cost}")
+                print(f"Expires At:       {res.expires_at}")
+                if res.note:
+                    print(f"Note:             {res.note}")
+            return 0
+
+        elif parsed.command in ("reserve-confirm", "commit"):
+            acc, usage = manager.confirm_reservation(parsed.reservation_id, actual_amount=parsed.amount, note=parsed.note)
+            if parsed.json:
+                print(json.dumps({
+                    "account": acc.to_dict(),
+                    "usage_record": usage.to_dict(),
+                }, indent=2))
+            else:
+                print(f"✓ Reservation '{parsed.reservation_id}' Confirmed")
+                print(f"Account:         {acc.email} (#{acc.id})")
+                print(f"Charged Credits: {usage.amount}")
+                print(f"Remaining Today: {acc.available_credits}")
+                print(f"Account Status:  {acc.status.value}")
+            return 0
+
+        elif parsed.command in ("reserve-cancel", "cancel"):
+            res = manager.cancel_reservation(parsed.reservation_id, reason=parsed.reason)
+            if parsed.json:
+                print(json.dumps(res.to_dict(), indent=2))
+            else:
+                print(f"✓ Reservation '{res.id}' Cancelled")
+                print("Zero credits were charged. Reserved capacity has been released.")
+            return 0
+
+        elif parsed.command == "reservations":
+            res_list = manager.list_reservations(status=parsed.status, limit=parsed.limit)
+            if parsed.json:
+                print(json.dumps([r.to_dict() for r in res_list], indent=2))
+            else:
+                headers = ["ID", "Account", "Cost", "Status", "Created At", "Expires At", "Note"]
+                rows = [
+                    [r.id, r.account_email or f"#{r.account_id}", r.estimated_cost, r.status.value, r.created_at[:19], r.expires_at[:19], r.note or "-"]
+                    for r in res_list
+                ]
+                print(_format_table(headers, rows))
+            return 0
+
+        elif parsed.command == "sync":
+            res = manager.sync(parsed.file)
+            if parsed.json:
+                print(json.dumps(res, indent=2))
+            else:
+                print("=== FLOW ACCOUNTS SYNCHRONIZATION ===")
+                print(f"Configuration file: {parsed.file}")
+                print(f"Accounts added:     {res['added']}")
+                print(f"Accounts updated:   {res['updated']}")
+                print(f"Accounts disabled:  {res['disabled']}")
+                print(f"Total in sheet:     {res['total_in_sheet']}")
+                if res.get("settings"):
+                    print("Updated settings:")
+                    for k, v in res["settings"].items():
+                        print(f"  - {k}: {v}")
+                if res.get("errors"):
+                    print("Warnings / Errors:")
+                    for e in res["errors"]:
+                        print(f"  ! {e}")
+            return 0
+
+        elif parsed.command == "credential":
+            if not parsed.cred_action:
+                print("Use 'flow-account credential set <ref>' or 'flow-account credential test <ref>'.", file=sys.stderr)
+                return 1
+
+            if parsed.cred_action == "set":
+                # Prompt securely without echo
+                pwd = getpass.getpass(f"Enter secret/credential for '{parsed.account}' (input hidden): ")
+                if not pwd:
+                    print("Error: Empty secret provided. Aborted.", file=sys.stderr)
+                    return 1
+                ref_str = set_credential(parsed.account, pwd)
+                if parsed.json:
+                    print(json.dumps({"status": "stored", "credential_ref": ref_str}))
+                else:
+                    print(f"✓ Credential securely stored under reference '{ref_str}'")
+                    print("Plaintext password will never appear in SQLite, XLSX spreadsheets, or logs.")
+                return 0
+
+            elif parsed.cred_action == "test":
+                exists = has_credential(parsed.account)
+                if parsed.json:
+                    print(json.dumps({"account": parsed.account, "exists": exists}))
+                else:
+                    if exists:
+                        print(f"✓ Credential for '{parsed.account}' is configured and accessible.")
+                    else:
+                        print(f"✗ Credential for '{parsed.account}' was NOT found.")
+                return 0 if exists else 1
 
         elif parsed.command == "mode":
             if parsed.mode:
@@ -260,7 +426,7 @@ def main(args: Optional[List[str]] = None) -> int:
                 if parsed.json:
                     print(json.dumps({"mode": new_mode.value}))
                 else:
-                    print(f"Mode set to: {new_mode.value}")
+                    print(f"Operation mode updated to: {new_mode.value}")
             else:
                 st = manager.status()
                 curr_mode = st["system"]["mode"]
@@ -287,12 +453,12 @@ def main(args: Optional[List[str]] = None) -> int:
             return 0
 
         elif parsed.command == "set-limit":
-            acc = manager.set_limit(parsed.account, parsed.daily, parsed.monthly)
+            acc = manager.set_limit(parsed.account, daily_limit=parsed.daily, monthly_limit=parsed.monthly)
             if parsed.json:
                 print(json.dumps(acc.to_dict(), indent=2))
             else:
-                m_str = f", monthly_limit={acc.monthly_limit}" if acc.monthly_limit else ""
-                print(f"Updated limits for #{acc.id} {acc.email}: daily_limit={acc.daily_limit}{m_str}")
+                monthly_disp = acc.monthly_limit if acc.monthly_limit else "None"
+                print(f"Updated limits for #{acc.id} {acc.email}: Daily={acc.daily_limit}, Monthly={monthly_disp}")
             return 0
 
         elif parsed.command == "reset-daily":
@@ -300,7 +466,7 @@ def main(args: Optional[List[str]] = None) -> int:
             if parsed.json:
                 print(json.dumps(res, indent=2))
             else:
-                print(f"Daily reset completed. Reset counters on {res['accounts_affected']} accounts.")
+                print(f"✓ Daily reset executed. Accounts reset: {res['accounts_reset']}")
             return 0
 
         elif parsed.command == "reset-monthly":
@@ -308,7 +474,7 @@ def main(args: Optional[List[str]] = None) -> int:
             if parsed.json:
                 print(json.dumps(res, indent=2))
             else:
-                print(f"Monthly reset completed. Reset monthly counters on {res['accounts_affected']} accounts.")
+                print(f"✓ Monthly reset executed. Accounts reset: {res['accounts_reset']}")
             return 0
 
         elif parsed.command == "import":
@@ -316,11 +482,12 @@ def main(args: Optional[List[str]] = None) -> int:
             if parsed.json:
                 print(json.dumps(res, indent=2))
             else:
-                print(f"Import completed:")
+                print(f"Import results for {parsed.file}:")
                 print(f"  Imported (new): {res['imported']}")
                 print(f"  Updated:        {res['updated']}")
+                print(f"  Skipped/Empty:  {res['skipped']}")
                 if res["errors"]:
-                    print("  Errors/Warnings:")
+                    print(f"  Errors encountered ({len(res['errors'])}):")
                     for err in res["errors"]:
                         print(f"    - {err}")
             return 0
@@ -330,7 +497,7 @@ def main(args: Optional[List[str]] = None) -> int:
             if parsed.json:
                 print(json.dumps(acc.to_dict(), indent=2))
             else:
-                print(f"Enabled account #{acc.id} {acc.email} (Status: {acc.status.value})")
+                print(f"Account #{acc.id} {acc.email} enabled (Status: {acc.status.value})")
             return 0
 
         elif parsed.command == "disable":
@@ -338,17 +505,17 @@ def main(args: Optional[List[str]] = None) -> int:
             if parsed.json:
                 print(json.dumps(acc.to_dict(), indent=2))
             else:
-                print(f"Disabled account #{acc.id} {acc.email} (Status: {acc.status.value})")
+                print(f"Account #{acc.id} {acc.email} disabled (Status: {acc.status.value})")
             return 0
 
         elif parsed.command == "human-required":
-            acc = manager.human_required(parsed.account, parsed.reason)
+            acc = manager.human_required(parsed.account, reason=parsed.reason)
             if parsed.json:
                 print(json.dumps(acc.to_dict(), indent=2))
             else:
-                print(f"Account #{acc.id} {acc.email} marked as NEEDS_HUMAN.")
+                print(f"Account #{acc.id} {acc.email} flagged as NEEDS_HUMAN.")
                 if parsed.reason:
-                    print(f"  Reason: {parsed.reason}")
+                    print(f"Reason: {parsed.reason}")
             return 0
 
         elif parsed.command == "human-cleared":
@@ -356,17 +523,21 @@ def main(args: Optional[List[str]] = None) -> int:
             if parsed.json:
                 print(json.dumps(acc.to_dict(), indent=2))
             else:
-                print(f"Account #{acc.id} {acc.email} cleared from human verification. (Status: {acc.status.value})")
+                print(f"Human verification flag cleared for #{acc.id} {acc.email} (Status: {acc.status.value})")
             return 0
 
         elif parsed.command == "consume":
-            acc, rec = manager.consume(parsed.amount, parsed.note)
+            acc, usage = manager.consume(parsed.amount, note=parsed.note)
             if parsed.json:
-                print(json.dumps({"account": acc.to_dict(), "usage": rec.to_dict()}, indent=2))
+                print(json.dumps({
+                    "account": acc.to_dict(),
+                    "usage_record": usage.to_dict(),
+                }, indent=2))
             else:
-                print(f"Consumed {rec.amount} credits on account #{acc.id} ({acc.email}).")
-                print(f"  Used Today: {acc.used_today}/{acc.daily_limit} | Remaining Today: {acc.available_credits}")
-                print(f"  Status: {acc.status.value}")
+                print(f"Consumed {parsed.amount} credits from #{acc.id} {acc.email}")
+                print(f"Remaining credits today: {acc.available_credits}")
+                print(f"Daily usage:             {acc.used_today}/{acc.daily_limit}")
+                print(f"Account status:          {acc.status.value}")
             return 0
 
         elif parsed.command == "add":
@@ -381,7 +552,7 @@ def main(args: Optional[List[str]] = None) -> int:
             if parsed.json:
                 print(json.dumps(acc.to_dict(), indent=2))
             else:
-                print(f"Added account #{acc.id} {acc.email} (Daily Limit: {acc.daily_limit}, Priority: {acc.priority})")
+                print(f"Account created: #{acc.id} {acc.email} (Daily: {acc.daily_limit}, Priority: {acc.priority})")
             return 0
 
         elif parsed.command == "strategy":
@@ -411,7 +582,6 @@ def main(args: Optional[List[str]] = None) -> int:
         elif parsed.command == "history":
             acc_id = None
             if parsed.account:
-                # Find account ID without mutating current active account
                 target = manager.get_account(parsed.account)
                 if not target:
                     raise AccountNotFoundError(f"Account '{parsed.account}' not found.")
