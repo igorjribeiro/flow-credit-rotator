@@ -65,9 +65,11 @@ class Mode(str, Enum):
 
 class Strategy(str, Enum):
     """Selection strategy for eligible accounts."""
+    SEQUENTIAL = "sequential"
     PRIORITY = "priority"
     ROUND_ROBIN = "round-robin"
     LOWEST_USAGE = "lowest-usage"
+    RANDOM = "random"
 
 
 @dataclass
@@ -140,7 +142,7 @@ class UsageRecord:
 class SystemState:
     """Global system configuration and runtime state."""
     mode: Mode = Mode.AUTO
-    strategy: Strategy = Strategy.PRIORITY
+    strategy: Strategy = Strategy.SEQUENTIAL
     current_account_id: Optional[int] = None
     default_daily_limit: int = 85
     last_reset_date: Optional[str] = None

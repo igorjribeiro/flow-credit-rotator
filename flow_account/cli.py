@@ -142,11 +142,20 @@ def build_parser() -> argparse.ArgumentParser:
     add_p.add_argument("--credential-ref", default="", help="Credential reference (e.g. ENV:FLOW_01)")
     add_p.add_argument("--notes", default="", help="Optional account notes")
 
+    # strategy
+    strat_cmd = subparsers.add_parser("strategy", help="Get or set account selection strategy")
+    strat_cmd.add_argument(
+        "strategy",
+        nargs="?",
+        choices=["sequential", "priority", "round-robin", "lowest-usage", "random"],
+        help="Strategy algorithm (sequential, priority, round-robin, lowest-usage, random)",
+    )
+
     # set-strategy
     strat_p = subparsers.add_parser("set-strategy", help="Set rotation strategy")
     strat_p.add_argument(
         "strategy",
-        choices=["priority", "round-robin", "lowest-usage"],
+        choices=["sequential", "priority", "round-robin", "lowest-usage", "random"],
         help="Strategy algorithm",
     )
 
@@ -373,6 +382,22 @@ def main(args: Optional[List[str]] = None) -> int:
                 print(json.dumps(acc.to_dict(), indent=2))
             else:
                 print(f"Added account #{acc.id} {acc.email} (Daily Limit: {acc.daily_limit}, Priority: {acc.priority})")
+            return 0
+
+        elif parsed.command == "strategy":
+            if parsed.strategy:
+                new_strat = manager.set_strategy(parsed.strategy)
+                if parsed.json:
+                    print(json.dumps({"strategy": new_strat.value}))
+                else:
+                    print(f"Rotation strategy set to: {new_strat.value}")
+            else:
+                st = manager.status()
+                curr_strat = st["system"]["strategy"]
+                if parsed.json:
+                    print(json.dumps({"strategy": curr_strat}))
+                else:
+                    print(f"Current strategy: {curr_strat}")
             return 0
 
         elif parsed.command == "set-strategy":

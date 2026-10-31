@@ -157,7 +157,13 @@ class FlowAccountManager:
         if not eligible:
             return None
         strategy = get_strategy(strategy_name)
-        return strategy.select(eligible, current_account_id=current_id, force_advance=force_advance)
+        curr_acc = self._find_account(conn, current_id) if current_id is not None else None
+        return strategy.select(
+            eligible,
+            current_account_id=current_id,
+            force_advance=force_advance,
+            current_account=curr_acc,
+        )
 
     # -------------------------------------------------------------------------
     # Public API
@@ -423,7 +429,7 @@ class FlowAccountManager:
         val = strategy.value if isinstance(strategy, Strategy) else str(strategy).strip().lower()
         if val not in {s.value for s in Strategy}:
             raise ValueError(
-                f"Invalid strategy '{strategy}'. Valid: priority, round-robin, lowest-usage."
+                f"Invalid strategy '{strategy}'. Valid: sequential, priority, round-robin, lowest-usage, random."
             )
         with self.db.transaction() as conn:
             state = self._get_system_state(conn)

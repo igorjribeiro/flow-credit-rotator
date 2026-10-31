@@ -20,9 +20,9 @@ ENV_STRATEGY = "FLOW_ACCOUNT_STRATEGY"
 DEFAULT_DB_PATH = "~/.flow-accounts/flow_accounts.db"
 DEFAULT_DAILY_LIMIT = 85
 DEFAULT_TIMEZONE_NAME = "America/Bahia"
-DEFAULT_STRATEGY_NAME = "priority"
+DEFAULT_STRATEGY_NAME = "sequential"
 
-VALID_STRATEGIES = {"priority", "round-robin", "lowest-usage"}
+VALID_STRATEGIES = {"sequential", "priority", "round-robin", "lowest-usage", "random"}
 VALID_MODES = {"AUTO", "MANUAL"}
 
 

@@ -5,7 +5,7 @@ description: Manage Google Flow accounts, credit limits, and rotation.
 
 # Google Flow Account Manager
 
-Orchestrates multiple Google Flow video generation accounts (12+ accounts with no hard ceiling), enforcing daily and monthly quotas, rotating accounts automatically or manually, and preventing automation blockage during CAPTCHA or human verification challenges.
+Orchestrates multiple Google Flow video generation accounts, managing any number of Google Flow accounts with a dynamic pool and no fixed ceiling, enforcing daily and monthly quotas, rotating accounts automatically or manually, and preventing automation blockage during CAPTCHA or human verification challenges.
 
 ## When to Use
 
@@ -25,7 +25,7 @@ Use this skill whenever:
   - `FLOW_ACCOUNT_DB_PATH`: Database path (default: `~/.flow-accounts/flow_accounts.db`).
   - `FLOW_ACCOUNT_DEFAULT_DAILY_LIMIT`: Initial daily limit for new accounts (default: `85`).
   - `FLOW_ACCOUNT_TIMEZONE`: Rollover timezone (default: `America/Bahia`).
-  - `FLOW_ACCOUNT_STRATEGY`: Default strategy (default: `priority`).
+  - `FLOW_ACCOUNT_STRATEGY`: Default strategy (default: `sequential`, also supports `random`, `round-robin`, `lowest-usage`, `priority`).
 
 ## How to Run
 
@@ -64,7 +64,8 @@ if account:
 | `flow-account consume <amount> [--note <text>]` | Deduct credits from current account and record audit log. |
 | `flow-account add <email> [--daily N] [--priority N]` | Add an individual account. |
 | `flow-account import <file.csv\|file.xlsx>` | Batch import accounts from spreadsheet. |
-| `flow-account set-strategy <strategy>` | Change strategy (`priority`, `round-robin`, `lowest-usage`). |
+| `flow-account strategy [strategy_name]` | View current strategy or switch strategy (`sequential`, `random`, `round-robin`, `lowest-usage`, `priority`). |
+| `flow-account set-strategy <strategy>` | Legacy alias to change rotation strategy. |
 | `flow-account set-limit <account> <daily> [--monthly M]` | Adjust limits for an account. |
 | `flow-account human-required <account> [reason]` | Mark account as requiring CAPTCHA/human intervention. |
 | `flow-account human-cleared <account>` | Restore account to active rotation after solving verification. |
@@ -88,9 +89,15 @@ if account:
    ```
 
 ### 2. Standard Production Workflow
-1. Ensure the system is in `AUTO` mode:
+1. Ensure the system is in `AUTO` mode and set the desired rotation strategy:
    ```bash
    flow-account mode auto
+   # View current strategy:
+   flow-account strategy
+   # Set sequential strategy (default):
+   flow-account strategy sequential
+   # Or switch to random distribution across eligible accounts:
+   flow-account strategy random
    ```
 2. Before launching a video task, retrieve the active account credentials:
    ```bash

@@ -1,6 +1,6 @@
 # Google Flow Account Manager
 
-A robust, production-grade management system for orchestrating multiple Google Flow accounts (12+ accounts with no hard ceiling) in high-throughput video generation pipelines.
+A robust, production-grade management system for orchestrating multiple Google Flow accounts with a dynamic account pool supporting any number of accounts with no fixed ceiling in high-throughput video generation pipelines.
 
 The manager automatically tracks daily and monthly credit limits, rotates accounts intelligently based on configurable strategies, isolates credentials safely, and seamlessly pauses accounts flagged for CAPTCHA or human intervention without stalling the overall pipeline.
 
@@ -8,11 +8,13 @@ The manager automatically tracks daily and monthly credit limits, rotates accoun
 
 ## Key Features
 
-- **Scalable Multi-Account Pool**: Manages 12+ accounts (or dozens) with zero hardcoded limits.
+- **Scalable Multi-Account Pool**: Dynamic account pool supporting any number of accounts with no fixed ceiling and zero hardcoded limits.
 - **Credit Quota Enforcement**: Tracks both `used_today` and `used_month` against per-account quotas and system defaults.
 - **Intelligent Rotation Strategies**:
-  - `priority`: Lower priority number first (1 = highest priority), tie-broken by lowest daily usage, then oldest last used.
-  - `round-robin`: Cycles deterministically and sequentially through eligible accounts.
+  - `sequential`: Cycles accounts in strict deterministic sequence (Account 1 -> Account 2 -> Account 3 based on priority and registration), holding the current account while eligible, auto-advancing when limits are reached or status changes, and wrapping back to the first eligible account.
+  - `random`: Uniformly selects among eligible accounts with 100% eligibility guarantee (never selects exhausted, disabled, or human-intervention accounts).
+  - `priority`: Priority-based selection order (alias to sequential rotation).
+  - `round-robin`: Cycles deterministically across eligible accounts on each rotation.
   - `lowest-usage`: Selects the account with the lowest `used_today`, tie-broken by priority and monthly usage.
 - **Safe Credential Isolation**: Strictly rejects plaintext passwords or secrets in import files and database storage. Uses `credential_ref` referencing external vaults or environment variables.
 - **Human Verification Handling**: When an account triggers a CAPTCHA or Google verification challenge, mark it with `human-required`. Automation immediately rotates to another account. Once resolved, `human-cleared` restores it to rotation.
@@ -89,7 +91,7 @@ Settings can be specified via environment variables or loaded from a `.env` file
 | `FLOW_ACCOUNT_DB_PATH` | `~/.flow-accounts/flow_accounts.db` | Path to SQLite database |
 | `FLOW_ACCOUNT_DEFAULT_DAILY_LIMIT` | `85` | Default daily limit for newly added accounts |
 | `FLOW_ACCOUNT_TIMEZONE` | `America/Bahia` | Timezone for daily/monthly rollovers |
-| `FLOW_ACCOUNT_STRATEGY` | `priority` | Selection strategy (`priority`, `round-robin`, `lowest-usage`) |
+| `FLOW_ACCOUNT_STRATEGY` | `sequential` | Selection strategy (`sequential`, `random`, `round-robin`, `lowest-usage`, `priority`) |
 
 ---
 
@@ -152,10 +154,16 @@ flow-account enable "flow.user@example.com"
 flow-account mode auto
 flow-account mode manual
 
-# Set selection strategy
-flow-account set-strategy priority
-flow-account set-strategy round-robin
-flow-account set-strategy lowest-usage
+# View or set selection strategy
+flow-account strategy
+flow-account strategy sequential
+flow-account strategy random
+flow-account strategy round-robin
+flow-account strategy lowest-usage
+flow-account strategy priority
+
+# Legacy command to set strategy
+flow-account set-strategy sequential
 
 # Rotate to next eligible account manually
 flow-account next
