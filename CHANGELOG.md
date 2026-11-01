@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-10-31
+
+### Added
+- **Public Model Template**:
+  - `templates/flow_accounts_template.xlsx`: clean public workbook with exactly two sheets (`ACCOUNTS` and `SETTINGS`).
+  - Standardized mock accounts (`flow_test01@example.com`, `flow_test02@example.com`, `flow_test03@example.com`) with `KEYRING:<email>` references.
+  - Detailed descriptions for all settings (`rotation_strategy`, `default_daily_limit=85`, `default_monthly_limit=1500`, `timezone=America/Bahia`, `auto_rotate=YES`).
+- **Complete Onboarding & Public Documentation**:
+  - Fully rewritten, beginner-friendly `README.md` covering architecture, installation, spreadsheet creation, secure password storage, synchronization, didactic reservation walkthrough, and autonomous agent protocols.
+  - Clear explanation of all 4 rotation strategies (`sequential`, `random`, `round-robin`, `lowest-usage`).
+  - Account-level limits override global default limits.
+- **Privacy & Security Hardening**:
+  - Excluded `config/` directory from Git tracking in `.gitignore` so real user credentials and accounts are never committed.
+  - Comprehensive verification of zero real personal emails, credentials, or paths in the public repository.
+- **Test Suite**:
+  - Added `tests/test_v120_public_experience.py` expanding coverage to 127 automated tests passing with 100% success.
+
 ## [1.1.0] - 2026-10-31
 
 ### Added

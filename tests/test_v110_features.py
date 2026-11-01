@@ -273,24 +273,24 @@ def test_12_xlsx_sync_add_account(temp_db_path, tmp_path):
     create_central_config_template_xlsx(xlsx_file)
 
     sync_res = manager.sync(xlsx_file)
-    assert sync_res["added"] == 4
+    assert sync_res["added"] == 3
     accounts = manager.list_accounts()
-    assert len(accounts) == 4
+    assert len(accounts) == 3
     emails = {a.email for a in accounts}
-    assert "account01@example.com" in emails
+    assert "flow_test01@example.com" in emails
 
 
 def test_13_xlsx_sync_update_account(temp_db_path, tmp_path):
     """Scenario 13: XLSX sync updates limits and priority for existing accounts."""
     manager = FlowAccountManager(db_path=temp_db_path)
-    manager.add_account("account01@example.com", daily_limit=50, priority=5)
+    manager.add_account("flow_test01@example.com", daily_limit=50, priority=5)
 
     xlsx_file = str(tmp_path / "sync_update.xlsx")
     create_central_config_template_xlsx(xlsx_file)
 
     sync_res = manager.sync(xlsx_file)
     assert sync_res["updated"] == 1
-    acc = manager.get_account("account01@example.com")
+    acc = manager.get_account("flow_test01@example.com")
     assert acc is not None
     assert acc.daily_limit == 85
     assert acc.priority == 1

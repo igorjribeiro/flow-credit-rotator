@@ -1,5 +1,4 @@
 email,daily_limit,monthly_limit,priority,status,credential_ref,notes
-account01@example.com,85,2550,1,ACTIVE,ENV:FLOW_ACCOUNT_01,High-priority video production account
-account02@example.com,85,2550,1,ACTIVE,ENV:FLOW_ACCOUNT_02,High-priority video production account
-account03@example.com,85,2550,2,ACTIVE,ENV:FLOW_ACCOUNT_03,Secondary overflow account
-account04@example.com,85,,2,ACTIVE,ENV:FLOW_ACCOUNT_04,Overflow account without monthly cap
+flow_test01@example.com,85,1500,1,ACTIVE,KEYRING:flow_test01@example.com,Primary example account
+flow_test02@example.com,85,1500,2,ACTIVE,KEYRING:flow_test02@example.com,Secondary example account
+flow_test03@example.com,85,1500,3,ACTIVE,KEYRING:flow_test03@example.com,Reserve example account

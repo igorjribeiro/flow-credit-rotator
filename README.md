@@ -2,43 +2,60 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v1.1.0-blue.svg)](https://github.com/igorjribeiro/flow-credit-rotator/releases/tag/v1.1.0)
+[![Version](https://img.shields.io/badge/version-v1.2.0-blue.svg)](https://github.com/igorjribeiro/flow-credit-rotator/releases/tag/v1.2.0)
 [![Status](https://img.shields.io/badge/status-production--ready-green.svg)](#)
 
-A robust, production-grade management, pre-check credit reservation, and rotation system for Google Flow accounts used by autonomous AI agents and high-throughput video generation pipelines.
+A robust, production-grade credit rotation, pre-check reservation, and quota management system for multiple Google Flow accounts. Designed specifically for autonomous AI agents and automated video rendering pipelines.
 
-The rotator tracks daily and monthly quotas, provides pre-check reservations to eliminate concurrency races and over-limit spending, rotates accounts sequentially or randomly, synchronizes configuration from a central XLSX spreadsheet, and isolates credentials safely using the OS Keyring.
+Flow Credit Rotator dynamically tracks daily and monthly quotas, provides atomic pre-checks and reservations to eliminate concurrency races and over-limit spending, rotates accounts sequentially or randomly, synchronizes configuration from a central Excel workbook, and isolates credentials safely using the OS Keyring.
+
+---
+
+## Table of Contents
+
+1. [Key Features](#key-features)
+2. [Architecture](#architecture)
+3. [Linux / macOS Installation](#linux--macos-installation)
+4. [Windows Installation (PowerShell)](#windows-installation-powershell)
+5. [How to Create the Real Configuration Spreadsheet](#how-to-create-the-real-configuration-spreadsheet)
+6. [Storing Credentials Securely](#storing-credentials-securely)
+7. [Synchronizing Configuration](#synchronizing-configuration)
+8. [Rotation Strategies Explained](#rotation-strategies-explained)
+9. [Pre-Check & Reservation Lifecycle](#pre-check--reservation-lifecycle)
+10. [Autonomous AI Agent Protocol](#autonomous-ai-agent-protocol)
+11. [CLI Command Reference](#cli-command-reference)
+12. [Python API Usage](#python-api-usage)
+13. [Troubleshooting](#troubleshooting)
+14. [Uninstallation](#uninstallation)
+15. [Contributing & Security](#contributing--security)
+16. [License](#license)
 
 ---
 
 ## Key Features
 
-- **Credit Pre-Check & Reservation System**:
-  - `used_today + active_reservations + estimated_cost <= daily_limit` checked before each job.
-  - Locks reserved capacity to avoid double-spend across concurrent agents.
-  - Explicit confirmation (`commit` / `reserve-confirm`) upon task success or cancellation (`cancel` / `reserve-cancel`) on failure.
+- **Credit Pre-Check & Reservation Lock**:
+  - Atomically verifies `used_today + active_reservations + estimated_cost <= daily_limit` (and monthly limits) prior to launching jobs.
+  - Locks reserved capacity to prevent double-spending across parallel workers.
+  - Explicit confirmation (`flow-account reserve-confirm`) debits credits only upon success; cancellation (`flow-account reserve-cancel`) releases capacity with zero credit charges.
 - **Central XLSX Configuration (`config/flow_accounts.xlsx`)**:
-  - Full account pool and system settings editable in a user-friendly Excel spreadsheet.
-  - `ACCOUNTS` sheet: order, email, daily/monthly limits, enabled flag, credential reference, and notes.
-  - `SETTINGS` sheet: rotation strategy, default daily limit, timezone, and auto-rotate mode.
-  - One-command synchronization: `flow-account sync config/flow_accounts.xlsx`.
-  - Disappearing accounts are disabled/archived, never destroying historical consumption logs.
+  - Administer your entire account pool and system settings in a familiar, user-friendly Excel file.
+  - `ACCOUNTS` sheet: set order, limits, enabled status, credential references, and operational notes.
+  - `SETTINGS` sheet: set global defaults, rotation strategy, and timezone.
+  - Sync with a single command: `flow-account sync config/flow_accounts.xlsx`.
+  - Disappearing accounts are safely disabled/archived, never destroying historical consumption records.
 - **Dynamic Account Pool**:
-  - Arbitrary number of accounts (1, 2, 5, 20, 50, 100+) without any hardcoded limit or ceiling.
-- **Intelligent Rotation Strategies**:
-  - `sequential` **(Default)**: Deterministic ordering (`1 -> 2 -> 3`), holding active accounts while capacity suffices, auto-advancing on exhaustion, and looping back.
-  - `random`: Uniform random selection strictly among eligible accounts with sufficient capacity.
-  - `round-robin` and `lowest-usage`: Also capacity-aware.
-- **Safe Credential Isolation & Keyring Support**:
-  - Zero plaintext passwords in spreadsheets, SQLite, or Git.
-  - Secure credential storage: `flow-account credential set <email_or_ref>` stores passwords securely in the OS Keyring / Windows Credential Manager.
+  - Scales to any number of accounts (1, 2, 5, 20, 50, 100+) without arbitrary ceilings or fixed limits.
+- **Safe Credential Isolation**:
+  - Strictly zero plaintext passwords in spreadsheets, SQLite database files, logs, or Git.
+  - Passwords are stored in the OS Keyring (Windows Credential Manager, Linux SecretService, macOS Keychain).
 - **Human Verification Handling (`NEEDS_HUMAN`)**:
-  - Immediate rotation away from accounts flagged with CAPTCHA or Google verification challenges.
-  - Seamless recovery via `human-cleared` once solved.
-- **Timezone-Aware Rollovers**:
-  - Automatic daily and monthly quota resets (default timezone: `America/Bahia`).
-- **Durable Concurrent SQLite**:
-  - SQLite in WAL mode with 30s busy timeout, foreign keys, and atomic immediate transactions.
+  - When an account triggers a Google verification prompt or CAPTCHA, it is automatically rotated out of service.
+  - Once solved by an operator, `flow-account human-cleared` restores it to rotation.
+- **Timezone-Aware Resets**:
+  - Automated daily and monthly quota rollovers (default: `America/Bahia` timezone).
+- **Concurrent SQLite Engine**:
+  - Thread-safe and process-safe with SQLite WAL mode (`PRAGMA journal_mode=WAL;`), 30-second busy timeout, and foreign key integrity.
 
 ---
 
@@ -46,29 +63,25 @@ The rotator tracks daily and monthly quotas, provides pre-check reservations to 
 
 ```
 flow-credit-rotator/
-├── flow_account/             # Core Python package (v1.1.0)
+├── flow_account/             # Core Python package (v1.2.0)
 │   ├── __init__.py           # Package exports and versioning
-│   ├── config.py             # Environment configurations and defaults
+│   ├── config.py             # Defaults and path resolution
 │   ├── models.py             # Account, Reservation, UsageRecord, SystemState
-│   ├── db.py                 # SQLite engine, WAL pragmas, reservations table
-│   ├── reset.py              # Timezone-aware daily/monthly rollover logic
-│   ├── strategies.py         # Capacity-aware Sequential, Random, Lowest-Usage
-│   ├── credentials.py        # Keyring integration with secure fallback vault
-│   ├── importer.py           # CSV/XLSX importer and central config sync
+│   ├── db.py                 # SQLite WAL engine and schema migrations
+│   ├── reset.py              # Timezone-aware rollover logic
+│   ├── strategies.py         # Capacity-aware selection algorithms
+│   ├── credentials.py        # OS Keyring integration with 0600 fallback vault
+│   ├── importer.py           # Multi-tab XLSX parser and sync engine
 │   ├── manager.py            # Orchestration engine with reservation lifecycle
-│   └── cli.py                # Comprehensive command-line interface
-├── config/
-│   └── flow_accounts.xlsx    # Central user-editable configuration workbook
-├── bin/
-│   └── flow-account          # Portable Unix executable launcher
+│   └── cli.py                # Command-line interface
 ├── templates/
-│   ├── accounts_template.csv  # Safe CSV import template
-│   ├── accounts_template.xlsx # Safe XLSX import template
-│   └── flow_accounts_template.xlsx # Central configuration template
-├── tests/                    # 121 comprehensive pytest tests
+│   ├── flow_accounts_template.xlsx # Central configuration template (mock data)
+│   ├── accounts_template.csv  # CSV batch import template
+│   └── accounts_template.xlsx # Single-sheet XLSX import template
+├── tests/                    # Comprehensive pytest test suite (127+ tests)
 ├── install.sh                # Linux/macOS installer and Hermes skill setup
-├── install.ps1               # Portable Windows installer and launcher setup
-├── pyproject.toml            # Build metadata (v1.1.0)
+├── install.ps1               # Portable Windows PowerShell installer
+├── pyproject.toml            # Build metadata (v1.2.0)
 ├── SKILL.md                  # Autonomous agent skill specification
 ├── .env.example              # Environment variables template
 ├── LICENSE                   # MIT License
@@ -80,9 +93,9 @@ flow-credit-rotator/
 
 ---
 
-## Installation
+## Linux / macOS Installation
 
-### Linux / macOS
+Execute the installation script in a bash terminal:
 
 ```bash
 git clone https://github.com/igorjribeiro/flow-credit-rotator.git
@@ -91,118 +104,284 @@ chmod +x install.sh
 ./install.sh
 ```
 
-Ensure `${HOME}/.local/bin` is in your `PATH`:
+The script:
+1. Verifies that Python 3.9+ is available.
+2. Creates `${HOME}/.local/bin` and `${HOME}/.flow-accounts`.
+3. Symlinks `${HOME}/.local/bin/flow-account` to `bin/flow-account`.
+4. Installs the package in editable mode (`pip install -e . --no-deps`).
+5. Registers the skill for Hermes and Claude Code at `${HOME}/.hermes/skills/flow-credit-rotator`.
+
+Ensure `${HOME}/.local/bin` is in your environment `PATH`:
 ```bash
 export PATH="${HOME}/.local/bin:${PATH}"
 ```
 
-### Windows (PowerShell)
+Validate installation:
+```bash
+flow-account --help
+flow-account status
+```
+
+---
+
+## Windows Installation (PowerShell)
+
+Open PowerShell and run:
 
 ```powershell
 git clone https://github.com/igorjribeiro/flow-credit-rotator.git
 cd flow-credit-rotator
+
+# Allow execution of local scripts if required by your policy:
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
 .\install.ps1
 ```
 
-The installer configures portable launchers (`flow-account.cmd`, `flow-account.ps1`) under `$env:USERPROFILE\.local\bin` and registers the skill in `$env:USERPROFILE\.hermes\skills\flow-credit-rotator`.
+The installer:
+1. Locates Python (`python`, `py`, or `python3`).
+2. Creates `$env:USERPROFILE\.local\bin` and `$env:USERPROFILE\.flow-accounts`.
+3. Generates portable `flow-account.cmd` and `flow-account.ps1` launchers.
+4. Installs the package in editable mode (`pip install -e . --no-deps`).
+5. Registers the skill in `$env:USERPROFILE\.hermes\skills\flow-credit-rotator` if Hermes is present.
+
+Validate installation:
+```powershell
+flow-account --help
+flow-account status
+```
 
 ---
 
-## Central Configuration via XLSX
+## How to Create the Real Configuration Spreadsheet
 
-Administrate accounts and global settings by editing `config/flow_accounts.xlsx`:
+1. **Copy the Template**:
+   Copy `templates/flow_accounts_template.xlsx` to your local configuration path:
+   ```bash
+   mkdir -p config
+   cp templates/flow_accounts_template.xlsx config/flow_accounts.xlsx
+   ```
+   *(Note: The `config/` directory is automatically ignored by `.gitignore`. Your real accounts will never be committed to Git).*
 
-### `ACCOUNTS` Sheet
-| order | email | daily_limit | monthly_limit | enabled | credential_ref | notes |
-|---|---|---|---|---|---|---|
-| 1 | account01@example.com | 85 | 2500 | YES | KEYRING:flow01 | Primary production account |
-| 2 | account02@example.com | 85 | 2500 | YES | KEYRING:flow02 | Secondary rotation account |
-| 3 | account03@example.com | 70 | 2000 | YES | KEYRING:flow03 | Overflow reserve |
+2. **Edit the `ACCOUNTS` Sheet**:
+   Open `config/flow_accounts.xlsx` in Excel, LibreOffice, or Google Sheets and configure your accounts:
 
-### `SETTINGS` Sheet
-| Setting | Value | Description |
-|---|---|---|
-| `rotation_strategy` | `sequential` | `sequential` (default) or `random` |
-| `default_daily_limit` | `85` | Default daily limit for new accounts |
-| `default_monthly_limit` | `2500` | Optional default monthly limit |
-| `timezone` | `America/Bahia` | Rollover timezone |
-| `auto_rotate` | `YES` | `YES` for AUTO mode, `NO` for MANUAL |
+   | order | email | daily_limit | monthly_limit | enabled | credential_ref | notes |
+   |---|---|---|---|---|---|---|
+   | 1 | flow_user01@example.com | 85 | 1500 | YES | KEYRING:flow_user01@example.com | Primary production account |
+   | 2 | flow_user02@example.com | 85 | 1500 | YES | KEYRING:flow_user02@example.com | Secondary rotation account |
+   | 3 | flow_user03@example.com | 70 | 1200 | YES | KEYRING:flow_user03@example.com | Reserve account |
 
-After editing, apply all changes:
+   - **`order`**: Priority sequence (1 = highest priority, used in sequential rotation).
+   - **`email`**: The Google account email address.
+   - **`daily_limit`**: Daily credit quota for this specific account.
+   - **`monthly_limit`**: Monthly credit quota for this specific account (optional).
+   - **`enabled`**: `YES` to include in active rotation, `NO` to disable.
+   - **`credential_ref`**: Safe reference key (recommended: `KEYRING:<email>`).
+   - **`notes`**: Arbitrary human-readable context. Does not affect rotation logic.
+
+   > ⚠️ **CRITICAL SECURITY RULE**: **NEVER put passwords or raw API keys in the Excel spreadsheet.** Store only the `KEYRING:<email>` reference.
+
+3. **Edit the `SETTINGS` Sheet**:
+   Configure system-wide defaults:
+
+   | Setting | Value | Description |
+   |---|---|---|
+   | `rotation_strategy` | `sequential` | Strategy: `sequential`, `random`, `round-robin`, `lowest-usage` |
+   | `default_daily_limit` | `85` | Default daily limit for new accounts |
+   | `default_monthly_limit` | `1500` | Optional default monthly limit |
+   | `timezone` | `America/Bahia` | Timezone for daily/monthly credit rollover |
+   | `auto_rotate` | `YES` | `YES` for AUTO mode, `NO` for MANUAL |
+
+---
+
+## Storing Credentials Securely
+
+Passwords and tokens are stored in the operating system's native secure credential manager (Windows Credential Manager, macOS Keychain, Linux SecretService) or a restricted local vault (`mode 0600`).
+
+To store a password for an account:
+```bash
+flow-account credential set flow_user01@example.com
+```
+
+The command prompts for the password with input hidden (no echo):
+```text
+Enter secret/credential for 'flow_user01@example.com' (input hidden):
+✓ Credential securely stored under reference 'KEYRING:flow_user01@example.com'
+Plaintext password will never appear in SQLite, XLSX spreadsheets, or logs.
+```
+
+To test if a credential exists and is accessible:
+```bash
+flow-account credential test flow_user01@example.com
+```
+
+---
+
+## Synchronizing Configuration
+
+After creating or updating `config/flow_accounts.xlsx`, synchronize your changes into the database:
+
 ```bash
 flow-account sync config/flow_accounts.xlsx
 ```
 
+Output:
+```text
+=== FLOW ACCOUNTS SYNCHRONIZATION ===
+Configuration file: config/flow_accounts.xlsx
+Accounts added:     3
+Accounts updated:   0
+Accounts disabled:  0
+Total in sheet:     3
+Updated settings:
+  - strategy: sequential
+  - default_daily_limit: 85
+  - default_monthly_limit: 1500
+  - timezone: America/Bahia
+  - mode: AUTO
+```
+
+Verify your active pool:
+```bash
+flow-account list
+flow-account status
+flow-account current
+```
+
+*Safety guarantee: If you remove an account from the spreadsheet, it is safely marked as `DISABLED` in the database. Its historical credit usage log is NEVER deleted.*
+
 ---
 
-## Mandatory Pre-Check & Reservation Lifecycle
+## Rotation Strategies Explained
 
+Flow Credit Rotator supports 4 capacity-aware rotation algorithms:
+
+1. **`sequential` (Default)**:
+   - Uses strict numerical ordering: `1 → 2 → 3 → 4...`
+   - Keeps using Account 1 as long as it has sufficient capacity for the requested operation.
+   - When Account 1 reaches daily/monthly limit, is disabled, or lacks capacity for the job, auto-advances to Account 2.
+   - On reaching the end of the pool, wraps back to the first eligible account.
+2. **`random`**:
+   - Uniformly selects at random strictly among accounts that have sufficient capacity for the requested operation.
+3. **`round-robin`**:
+   - Deterministically cycles across eligible accounts with sufficient capacity.
+4. **`lowest-usage`**:
+   - Selects the eligible account with the lowest `used_today` (including pending reservations).
+
+> 💡 **Priority of Limits**: Account-specific limits configured in the `ACCOUNTS` sheet always override global defaults from the `SETTINGS` sheet. For example, if `default_daily_limit` is 85, but an account specifies `daily_limit = 70`, that account will strictly enforce the 70 credit limit.
+
+---
+
+## Pre-Check & Reservation Lifecycle
+
+Autonomous agents must verify that an account has sufficient capacity before launching video generation.
+
+### Example Scenario:
+- **Active Account**: Has consumed 80 of its 85 daily credits (5 remaining).
+- **Incoming Generation Job**: Costs 10 credits.
+- **Pre-check Calculation**: `80 + 10 = 90 > 85`. The active account cannot run this job.
+
+### 1. Pre-Check & Reserve
 ```bash
-# 1. Check if capacity exists without reserving
-flow-account can-consume 10
+flow-account reserve 10 --note "Render video scene #402"
+```
+Output:
+```text
+✓ Credit Reservation Created
+Reservation ID:   res_9b2d881ef032
+Authorized Email: flow_user02@example.com (#2)
+Reserved Credits: 10
+Expires At:       2026-10-31T21:30:00-03:00
+Note:             Render video scene #402
+```
+The rotator automatically selects `flow_user02@example.com` because it has available capacity. The 10 credits are now reserved, preventing other workers from double-spending this capacity.
 
-# 2. Pre-check and reserve credits (locks capacity)
-flow-account reserve 10 --note "Render video job #104"
-# Output returns:
-# Reservation ID:   res_9b2d881ef032
-# Authorized Email: account01@example.com
-
-# 3. If job succeeds in Google Flow: confirm and deduct real credits
+### 2A. Job Succeeded: Confirm and Commit
+```bash
 flow-account reserve-confirm res_9b2d881ef032 --amount 10
+```
+Output:
+```text
+✓ Reservation 'res_9b2d881ef032' Confirmed
+Account:         flow_user02@example.com (#2)
+Charged Credits: 10
+Remaining Today: 75
+Account Status:  ACTIVE
+```
 
-# 4. If job fails: cancel reservation (zero credits deducted, capacity freed)
+### 2B. Job Failed or Aborted: Cancel
+```bash
 flow-account reserve-cancel res_9b2d881ef032 --reason "Browser navigation timeout"
 ```
+Output:
+```text
+✓ Reservation 'res_9b2d881ef032' Cancelled
+Zero credits were charged. Reserved capacity has been released.
+```
+
+---
+
+## Autonomous AI Agent Protocol
+
+When an autonomous agent interacts with Google Flow, it MUST follow this strict 6-step lifecycle:
+
+```
+[Agent Task]
+      │
+      ▼
+1. Determine Expected Cost (e.g. 5 or 10 credits)
+      │
+      ▼
+2. Call Pre-Check / Reserve:
+   $ flow-account reserve 10 --note "Job #1042 batch render"
+      │
+      ▼
+3. Obtain Authorized Account & Reservation ID
+      │
+      ▼
+4. Execute Video Generation in Google Flow using Authorized Account
+      │
+      ├───────────────────────────────┐
+   [SUCCESS]                       [FAILURE / ABORT]
+      │                               │
+      ▼                               ▼
+5. Confirm Consumption:         6. Cancel Reservation:
+   $ flow-account reserve-confirm  $ flow-account reserve-cancel
+     <reservation_id>                <reservation_id> --reason "Error"
+   (Deducts real credits)          (Zero credits charged, capacity freed)
+```
+
+> 🛑 **MANDATORY POLICY**: Agents must NEVER execute a generation first and register consumption afterwards without a pre-check reservation.
 
 ---
 
 ## CLI Command Reference
 
-### Status & Inspection
-```bash
-flow-account status [--json]
-flow-account list [--json]
-flow-account current [--json]
-flow-account next [--json]
-flow-account history [--limit 50]
-```
-
-### Pre-Checks & Reservations
-```bash
-flow-account can-consume <amount> [--json]
-flow-account reserve <amount> [--note <text>] [--ttl 1800] [--json]
-flow-account reserve-confirm <res_id> [--amount <int>] [--note <text>] [--json]
-flow-account reserve-cancel <res_id> [--reason <text>] [--json]
-flow-account reservations [--status PENDING|COMMITTED|CANCELLED|EXPIRED] [--json]
-```
-
-### Configuration & Synchronization
-```bash
-# Sync central XLSX spreadsheet
-flow-account sync [config/flow_accounts.xlsx] [--json]
-
-# Manage secure credentials in OS Keyring
-flow-account credential set <email_or_ref>
-flow-account credential test <email_or_ref>
-
-# Mode and Strategy
-flow-account mode auto
-flow-account mode manual
-flow-account strategy sequential
-flow-account strategy random
-
-# Quotas and Resets
-flow-account set-limit "account01@example.com" 100 --monthly 3000
-flow-account reset-daily
-flow-account reset-monthly
-```
-
-### Human Verification Workflows
-```bash
-flow-account human-required "account01@example.com" "Google CAPTCHA"
-flow-account human-cleared "account01@example.com"
-```
+| Command | Description |
+|---|---|
+| `flow-account status [--json]` | Show overall status, pool metrics, and current active account. |
+| `flow-account list [--json]` | List all accounts, limits, usage, priority, and eligibility. |
+| `flow-account current [--json]` | Show currently active account details and remaining credits. |
+| `flow-account next [--json]` | Manually rotate to the next eligible account in sequence. |
+| `flow-account can-consume <amount> [--json]` | Pre-check capacity for an operation without creating a reservation. |
+| `flow-account reserve <amount> [--note <text>] [--json]` | Pre-check and reserve credits before generation; returns account and reservation ID. |
+| `flow-account reserve-confirm <res_id> [--amount N] [--json]` | Confirm reservation (alias: `commit`); debits credits to usage history. |
+| `flow-account reserve-cancel <res_id> [--reason <text>] [--json]` | Cancel reservation (alias: `cancel`); releases capacity without charging credits. |
+| `flow-account reservations [--status STATUS] [--json]` | List recent reservations (`PENDING`, `COMMITTED`, `CANCELLED`, `EXPIRED`). |
+| `flow-account sync [config/flow_accounts.xlsx] [--json]` | Synchronize accounts, order, and global settings from central XLSX spreadsheet. |
+| `flow-account credential set <email_or_ref>` | Securely store account secret in system keyring via hidden terminal prompt. |
+| `flow-account credential test <email_or_ref>` | Verify if a credential exists and is accessible. |
+| `flow-account mode [auto\|manual] [--json]` | View or set rotation mode (`AUTO` or `MANUAL`). |
+| `flow-account select <id\|email> [--json]` | Select a specific account to use. |
+| `flow-account consume <amount> [--note <text>] [--json]` | Direct debit of credits from active account. |
+| `flow-account add <email> [--daily N] [--monthly M] [--priority N] [--credential-ref REF]` | Add a new account manually. |
+| `flow-account set-limit <account> <daily> [--monthly M] [--json]` | Adjust daily/monthly limits for an account. |
+| `flow-account human-required <account> [reason] [--json]` | Mark account as requiring CAPTCHA/human intervention; triggers immediate auto-rotation. |
+| `flow-account human-cleared <account> [--json]` | Restore account to active rotation after human solves verification. |
+| `flow-account disable <account>` / `enable <account>` | Disable or re-enable an account. |
+| `flow-account reset-daily [--json]` | Manually trigger daily quota reset and restore eligible accounts. |
+| `flow-account history [--limit N] [--account ID\|EMAIL] [--json]` | View credit consumption audit log. |
 
 ---
 
@@ -213,34 +392,68 @@ from flow_account import FlowAccountManager, NoAccountsAvailableError
 
 manager = FlowAccountManager()
 
-# Pre-check and reserve credits
+# 1. Pre-check and reserve credits
 try:
-    acc, res = manager.reserve(cost=10, note="Video batch generation #102")
+    acc, res = manager.reserve(cost=10, note="Video generation batch #501")
     print(f"Using {acc.email} (Reservation: {res.id})")
 except NoAccountsAvailableError:
-    print("All accounts exhausted. Waiting for rollover.")
+    print("All accounts exhausted or lack sufficient capacity. Pausing until daily rollover.")
     raise
 
-# Execute job
-job_success = False
+# 2. Execute task
+success = False
 try:
-    # ... Google Flow automation execution ...
-    job_success = True
+    # ... call Google Flow automation using acc.email ...
+    success = True
 finally:
-    if job_success:
-        updated_acc, usage = manager.confirm_reservation(res.id, actual_amount=10)
-        print(f"Credits debited. Remaining today: {updated_acc.available_credits}")
+    if success:
+        # 3. Confirm and commit credit deduction
+        updated_acc, usage_record = manager.confirm_reservation(res.id, actual_amount=10)
+        print(f"Charged 10 credits. Available remaining: {updated_acc.available_credits}")
     else:
+        # 4. Release reservation on failure (zero credits debited)
         manager.cancel_reservation(res.id, reason="Job aborted")
-        print("Reservation cancelled without debiting credits.")
+        print("Reservation cancelled. Zero credits consumed.")
+```
+
+---
+
+## Troubleshooting
+
+- **`NoAccountsAvailableError` during reserve / consume**:
+  Check `flow-account list`. All accounts may have exhausted their daily limit, reached their monthly quota, or be flagged as `DISABLED` or `NEEDS_HUMAN`. You can test manual reset via `flow-account reset-daily`.
+- **Account stuck in `NEEDS_HUMAN`**:
+  Run `flow-account human-cleared <email>` after resolving the Google CAPTCHA or verification challenge in a browser.
+- **`flow-account: command not found`**:
+  Ensure `${HOME}/.local/bin` (Linux/macOS) or `$env:USERPROFILE\.local\bin` (Windows) is in your system `PATH`.
+- **Import / Sync rejected with `SecurityImportError`**:
+  Your spreadsheet contains forbidden password headers (e.g. `password`, `senha`, `secret`). Remove those columns and use `credential_ref` referencing `KEYRING:<email>` instead.
+
+---
+
+## Uninstallation
+
+### Linux / macOS
+```bash
+rm -f "${HOME}/.local/bin/flow-account"
+rm -rf "${HOME}/.hermes/skills/flow-credit-rotator"
+pip uninstall -y flow-credit-rotator 2>/dev/null || true
+```
+
+### Windows (PowerShell)
+```powershell
+Remove-Item -Path "$env:USERPROFILE\.local\bin\flow-account.cmd" -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "$env:USERPROFILE\.local\bin\flow-account.ps1" -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "$env:USERPROFILE\.hermes\skills\flow-credit-rotator" -Recurse -Force -ErrorAction SilentlyContinue
+python -m pip uninstall -y flow-credit-rotator
 ```
 
 ---
 
 ## Contributing & Security
 
-- See [CONTRIBUTING.md](CONTRIBUTING.md) for testing and development workflow.
-- See [SECURITY.md](SECURITY.md) for security policies and credential isolation.
+- See [CONTRIBUTING.md](CONTRIBUTING.md) for code style, development workflow, and testing practices.
+- See [SECURITY.md](SECURITY.md) for security policies, vulnerability reporting, and credential isolation.
 
 ---
 

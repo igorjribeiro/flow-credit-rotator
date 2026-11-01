@@ -134,9 +134,9 @@ finally:
 
 ---
 
-## Central Configuration via XLSX (`config/flow_accounts.xlsx`)
+## Central Configuration via XLSX
 
-Users administer accounts and settings by editing `config/flow_accounts.xlsx` and running:
+Users administer accounts and settings by copying `templates/flow_accounts_template.xlsx` to `config/flow_accounts.xlsx` (which is gitignored), editing it, and running:
 ```bash
 flow-account sync config/flow_accounts.xlsx
 ```
@@ -146,14 +146,14 @@ The workbook contains two sheets:
    - `order`: Numeric priority sequence (1, 2, 3...)
    - `email`: Account email address
    - `daily_limit`: Daily credit limit (e.g. 85)
-   - `monthly_limit`: Optional monthly limit (e.g. 2500)
+   - `monthly_limit`: Optional monthly limit (e.g. 1500)
    - `enabled`: `YES` or `NO`
-   - `credential_ref`: Safe indirect reference (`KEYRING:flow01`, `ENV:FLOW01`)
+   - `credential_ref`: Safe indirect reference (`KEYRING:user@example.com`, `ENV:FLOW01`)
    - `notes`: Operational description
 2. **`SETTINGS`**:
    - `rotation_strategy`: `sequential` (default) or `random`
    - `default_daily_limit`: 85
-   - `default_monthly_limit`: optional
+   - `default_monthly_limit`: 1500
    - `timezone`: `America/Bahia`
    - `auto_rotate`: `YES` (AUTO mode) or `NO` (MANUAL mode)
 

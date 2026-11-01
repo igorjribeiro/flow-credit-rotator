@@ -347,10 +347,9 @@ def create_central_config_template_xlsx(filepath: str) -> None:
     ws_acc.append(acc_headers)
 
     sample_accounts = [
-        [1, "account01@example.com", 85, 2500, "YES", "KEYRING:flow01", "Primary high-priority production account"],
-        [2, "account02@example.com", 85, 2500, "YES", "KEYRING:flow02", "Secondary rotation production account"],
-        [3, "account03@example.com", 70, 2000, "YES", "KEYRING:flow03", "Reserve overflow account"],
-        [4, "account04@example.com", 85, None, "YES", "ENV:FLOW_ACCOUNT_04", "Overflow account without monthly cap"],
+        [1, "flow_test01@example.com", 85, 1500, "YES", "KEYRING:flow_test01@example.com", "Primary example account"],
+        [2, "flow_test02@example.com", 85, 1500, "YES", "KEYRING:flow_test02@example.com", "Secondary example account"],
+        [3, "flow_test03@example.com", 85, 1500, "YES", "KEYRING:flow_test03@example.com", "Reserve example account"],
     ]
     for row in sample_accounts:
         ws_acc.append(row)
@@ -361,8 +360,8 @@ def create_central_config_template_xlsx(filepath: str) -> None:
     settings_rows = [
         ["rotation_strategy", "sequential", "Selection strategy: sequential | random | round-robin | lowest-usage"],
         ["default_daily_limit", 85, "Default daily credit limit applied to newly registered accounts"],
-        ["default_monthly_limit", 2500, "Optional default monthly credit limit (leave empty if none)"],
-        ["timezone", "America/Bahia", "Timezone for daily and monthly credit rollovers"],
+        ["default_monthly_limit", 1500, "Optional default monthly credit limit"],
+        ["timezone", "America/Bahia", "Timezone used for daily and monthly credit rollovers"],
         ["auto_rotate", "YES", "YES for unattended AUTO mode, NO for pinned MANUAL mode"],
     ]
     for row in settings_rows:
