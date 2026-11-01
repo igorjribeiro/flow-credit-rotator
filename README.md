@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v1.2.2-blue.svg)](https://github.com/igorjribeiro/flow-credit-rotator/releases/tag/v1.2.2)
+[![Version](https://img.shields.io/badge/version-v1.2.3-blue.svg)](https://github.com/igorjribeiro/flow-credit-rotator/releases/tag/v1.2.3)
 [![Status](https://img.shields.io/badge/status-production--ready-green.svg)](#)
 
 A robust, production-grade credit rotation, pre-check reservation, and quota management system for multiple Google Flow accounts. Designed specifically for autonomous AI agents and automated video rendering pipelines.
@@ -63,7 +63,7 @@ Flow Credit Rotator dynamically tracks daily and monthly quotas, provides atomic
 
 ```
 flow-credit-rotator/
-├── flow_account/             # Core Python package (v1.2.2)
+├── flow_account/             # Core Python package (v1.2.3)
 │   ├── __init__.py           # Package exports and versioning
 │   ├── config.py             # Defaults and path resolution
 │   ├── models.py             # Account, Reservation, UsageRecord, SystemState
@@ -80,10 +80,10 @@ flow-credit-rotator/
 │   └── README.md             # Local configuration documentation
 ├── templates/
 │   └── flow_accounts_template.xlsx # Sole official XLSX configuration template (mock data)
-├── tests/                    # Comprehensive pytest test suite (130+ tests)
+├── tests/                    # Comprehensive pytest test suite (136+ tests)
 ├── install.sh                # Linux/macOS installer and Hermes skill setup
 ├── install.ps1               # Portable Windows PowerShell installer
-├── pyproject.toml            # Build metadata (v1.2.2)
+├── pyproject.toml            # Build metadata (v1.2.3)
 ├── SKILL.md                  # Autonomous agent skill specification
 ├── .env.example              # Environment variables template
 ├── LICENSE                   # MIT License
@@ -128,30 +128,45 @@ flow-account status
 
 ## Windows Installation (PowerShell)
 
-Open PowerShell and run:
+Open Windows PowerShell 5.1 or PowerShell 7+ as a standard user and run:
 
 ```powershell
 git clone https://github.com/igorjribeiro/flow-credit-rotator.git
 cd flow-credit-rotator
 
-# Allow execution of local scripts if required by your policy:
+# Allow execution of local scripts for the current process:
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 .\install.ps1
 ```
 
-The installer:
-1. Locates Python (`python`, `py`, or `python3`).
-2. Creates `$env:USERPROFILE\.local\bin` and `$env:USERPROFILE\.flow-accounts`.
-3. Generates portable `flow-account.cmd` and `flow-account.ps1` launchers.
-4. Installs the package in editable mode (`pip install -e . --no-deps`).
-5. Registers the skill in `$env:USERPROFILE\.hermes\skills\flow-credit-rotator` if Hermes is present.
+### Validating Installation and Differentiating Old vs New Binaries
 
-Validate installation:
+During execution, `install.ps1` explicitly reports the old and new binary resolution paths:
+```text
+[INFO] OLD_FLOW_ACCOUNT_PATH=C:\Users\username\.local\bin\flow-account.cmd
+[OK] Existing SQLite database preserved: C:\Users\username\.flow-accounts\flow_accounts.db
+[OK] Created CMD launcher at C:\Users\username\.local\bin\flow-account.cmd
+[OK] Created PowerShell launcher at C:\Users\username\.local\bin\flow-account.ps1
+[INFO] NEW_FLOW_ACCOUNT_PATH=C:\Users\username\.local\bin\flow-account.cmd
+```
+
+Verify that PowerShell executes the newly installed binary:
+
 ```powershell
+# Check which binary is resolved in your PATH:
+Get-Command flow-account
+
+# Verify CLI responsiveness:
 flow-account --help
 flow-account status
 ```
+
+### Safety & State Preservation During Upgrades
+`install.ps1` is completely idempotent. Reinstalling or upgrading will **never** delete or overwrite:
+- User SQLite database (`$env:USERPROFILE\.flow-accounts\flow_accounts.db`)
+- Stored credentials in OS Keyring or fallback vault (`.vault_store`)
+- Local configuration spreadsheets (`config/flow_accounts.xlsx`)
 
 ---
 

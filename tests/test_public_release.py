@@ -38,10 +38,10 @@ def test_package_metadata():
 
     content = pyproject_path.read_text(encoding="utf-8")
     assert 'name = "flow-credit-rotator"' in content
-    assert 'version = "1.2.2"' in content
+    assert 'version = "1.2.3"' in content
     assert 'license = { text = "MIT" }' in content
     assert 'Multi-account' in content
-    assert __version__ == "1.2.2"
+    assert __version__ == "1.2.3"
 
     assert 'Repository = "https://github.com/igorjribeiro/flow-credit-rotator"' in content
     assert 'Homepage = "https://github.com/igorjribeiro/flow-credit-rotator"' in content

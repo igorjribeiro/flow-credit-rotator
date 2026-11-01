@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] - 2026-10-31
+
+### Fixed
+- **Windows PowerShell 5.1 & PowerShell 7+ Parser Fixes**:
+  - Rewrote `install.ps1` in 100% pure 7-bit ASCII with CRLF line endings, eliminating all encoding issues and mojibake (`âœ“`).
+  - Switched from interpolated here-strings to non-interpolated single-quote here-strings (`@' ... '@`), removing all invalid backtick escapes (`$true, `$Arguments, etc.).
+  - Added detection and logging of previous binary paths (`OLD_FLOW_ACCOUNT_PATH`) and new paths (`NEW_FLOW_ACCOUNT_PATH`).
+  - Explicitly classified directory targets (PROGRAM FILES, STATE/DATABASE, CREDENTIAL STORAGE, USER CONFIG) to ensure reinstallation never destroys existing SQLite databases or stored credentials.
+  - Added `setup.py` fallback shim ensuring `pip install -e . --no-deps` functions across all setuptools versions.
+- **GitHub Actions Windows CI**:
+  - Added `.github/workflows/windows-test.yml` running real Windows matrix tests on `windows-latest` under Windows PowerShell 5.1, PowerShell 7, and Ubuntu Linux.
+  - Added test suite `tests/test_v123_windows_installer.py` verifying AST parsing, pure ASCII encoding, absence of backticks, clean installation, and upgrade state preservation.
+
 ## [1.2.2] - 2026-10-31
 
 ### Changed
