@@ -16,4 +16,5 @@ credentials/
 secrets/
 cookies/
 sessions/
-config/
+config/*.xlsx
+config/flow_accounts.xlsx

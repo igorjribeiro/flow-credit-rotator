@@ -125,9 +125,16 @@ def test_readme_covers_all_onboarding_sections():
     assert "flow-account reserve-confirm" in content or "commit" in content
     assert "flow-account reserve-cancel" in content or "cancel" in content
 
+    # Clean template references (no obsolete template mentions)
+    import re
+    assert not re.search(r"(?<!flow_)accounts_template\.xlsx", content), "Old accounts_template.xlsx found in README"
+    assert "accounts_template.csv" not in content
+    assert "flow_accounts_template.xlsx" in content
+    assert "config/README.md" in content or "config/" in content
+
 
 def test_only_single_official_xlsx_template_in_templates():
-    """Verify templates/flow_accounts_template.xlsx is the only official XLSX template, and duplicates are gone."""
+    """Verify templates/flow_accounts_template.xlsx is the only official template, with zero CSVs and zero duplicates."""
     templates_dir = REPO_ROOT / "templates"
     xlsx_files = list(templates_dir.glob("*.xlsx"))
     assert len(xlsx_files) == 1, f"Expected exactly 1 XLSX template in templates/, found: {[f.name for f in xlsx_files]}"
@@ -137,8 +144,14 @@ def test_only_single_official_xlsx_template_in_templates():
     assert not (templates_dir / "accounts_template.xlsx").exists()
     assert not (templates_dir / "modelo_de_contas_de_fluxo.xlsx").exists()
 
-    # CSV template is retained as alternative
-    assert (templates_dir / "accounts_template.csv").exists()
+    # Zero CSV templates in templates directory
+    csv_files = list(templates_dir.glob("*.csv"))
+    assert len(csv_files) == 0, f"Expected 0 CSV files in templates/, found: {[f.name for f in csv_files]}"
+    assert not (templates_dir / "accounts_template.csv").exists()
+
+    # config/README.md must exist
+    config_readme = REPO_ROOT / "config" / "README.md"
+    assert config_readme.exists(), "config/README.md must exist"
 
 
 def test_notes_column_documented_as_optional_and_safe_usage():
@@ -149,3 +162,25 @@ def test_notes_column_documented_as_optional_and_safe_usage():
     assert "notes" in content
     assert "optional" in content
     assert "never edit the original template" in content or "never edit the template directly" in content or "never edit the template original" in content
+
+
+def test_public_template_has_no_internal_priority_or_status_headers():
+    """Verify official public template does not expose internal 'priority' or 'status' headers."""
+    template_path = REPO_ROOT / "templates" / "flow_accounts_template.xlsx"
+    wb = openpyxl.load_workbook(filename=str(template_path), read_only=True, data_only=True)
+    ws_acc = wb["ACCOUNTS"]
+    rows = list(ws_acc.iter_rows(values_only=True))
+    wb.close()
+    headers = [str(h).strip().lower() for h in rows[0]]
+    assert "priority" not in headers, "Public template should use 'order', not 'priority'"
+    assert "status" not in headers, "Public template should use 'enabled', not 'status'"
+    assert "notes" in headers, "Public template must include 'notes' column"
+
+
+def test_readme_tree_matches_repository_structure():
+    """Verify README.md architecture tree matches actual repository structure."""
+    readme_path = REPO_ROOT / "README.md"
+    content = readme_path.read_text(encoding="utf-8")
+    assert "config/\n│   └── README.md" in content or "config/README.md" in content or "config/" in content
+    assert "flow_accounts_template.xlsx" in content
+    assert "accounts_template.csv" not in content

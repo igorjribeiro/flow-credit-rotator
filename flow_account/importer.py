@@ -359,10 +359,10 @@ def create_central_config_template_xlsx(filepath: str) -> None:
     ws_settings.append(["Setting", "Value", "Description"])
     settings_rows = [
         ["rotation_strategy", "sequential", "Selection strategy: sequential | random | round-robin | lowest-usage"],
-        ["default_daily_limit", 85, "Default daily credit limit applied to newly registered accounts"],
-        ["default_monthly_limit", 1500, "Optional default monthly credit limit"],
-        ["timezone", "America/Bahia", "Timezone used for daily and monthly credit rollovers"],
-        ["auto_rotate", "YES", "YES for unattended AUTO mode, NO for pinned MANUAL mode"],
+        ["default_daily_limit", 85, "Default daily credit limit applied when an account-specific value is not provided"],
+        ["default_monthly_limit", 1500, "Default monthly credit limit applied when an account-specific value is not provided"],
+        ["timezone", "America/Bahia", "Timezone for daily and monthly credit rollovers"],
+        ["auto_rotate", "YES", "YES for automatic account rotation, NO for manual/pinned mode"],
     ]
     for row in settings_rows:
         ws_settings.append(row)

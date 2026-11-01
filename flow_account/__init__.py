@@ -3,7 +3,7 @@
 Multi-account credit rotation and quota manager for Google Flow automation agents.
 """
 
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 
 from flow_account.models import (
     Account,

@@ -1,4 +1,0 @@
-email,daily_limit,monthly_limit,priority,status,credential_ref,notes
-flow_test01@example.com,85,1500,1,ACTIVE,KEYRING:flow_test01@example.com,Primary example account
-flow_test02@example.com,85,1500,2,ACTIVE,KEYRING:flow_test02@example.com,Secondary example account
-flow_test03@example.com,85,1500,3,ACTIVE,KEYRING:flow_test03@example.com,Reserve example account

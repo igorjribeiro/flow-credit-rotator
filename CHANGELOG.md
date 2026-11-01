@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-10-31
+
+### Changed
+- **Definitive Single Template Rule**:
+  - Maintained `templates/flow_accounts_template.xlsx` as the sole public template in the repository.
+  - Completely removed CSV template (`templates/accounts_template.csv`) to eliminate all confusion.
+  - Explicitly defined the 10-step configuration onboarding flow around `config/flow_accounts.xlsx`.
+  - Added `config/README.md` to document local configuration while keeping `config/*.xlsx` gitignored.
+  - Documented that the `notes` column in `ACCOUNTS` is strictly optional for human observations and does not affect selection logic.
+  - Updated all descriptions in `SETTINGS` to document clear precedence rules (account limits override settings defaults).
+
 ## [1.2.1] - 2026-10-31
 
 ### Changed

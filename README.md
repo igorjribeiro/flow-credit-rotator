@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v1.2.1-blue.svg)](https://github.com/igorjribeiro/flow-credit-rotator/releases/tag/v1.2.1)
+[![Version](https://img.shields.io/badge/version-v1.2.2-blue.svg)](https://github.com/igorjribeiro/flow-credit-rotator/releases/tag/v1.2.2)
 [![Status](https://img.shields.io/badge/status-production--ready-green.svg)](#)
 
 A robust, production-grade credit rotation, pre-check reservation, and quota management system for multiple Google Flow accounts. Designed specifically for autonomous AI agents and automated video rendering pipelines.
@@ -63,7 +63,7 @@ Flow Credit Rotator dynamically tracks daily and monthly quotas, provides atomic
 
 ```
 flow-credit-rotator/
-├── flow_account/             # Core Python package (v1.2.0)
+├── flow_account/             # Core Python package (v1.2.2)
 │   ├── __init__.py           # Package exports and versioning
 │   ├── config.py             # Defaults and path resolution
 │   ├── models.py             # Account, Reservation, UsageRecord, SystemState
@@ -74,13 +74,16 @@ flow-credit-rotator/
 │   ├── importer.py           # Multi-tab XLSX parser and sync engine
 │   ├── manager.py            # Orchestration engine with reservation lifecycle
 │   └── cli.py                # Command-line interface
+├── bin/
+│   └── flow-account          # Portable Unix executable launcher
+├── config/
+│   └── README.md             # Local configuration documentation
 ├── templates/
-│   ├── flow_accounts_template.xlsx # Sole official XLSX configuration template (mock data)
-│   └── accounts_template.csv  # CSV alternative import template (XLSX recommended)
-├── tests/                    # Comprehensive pytest test suite (128+ tests)
+│   └── flow_accounts_template.xlsx # Sole official XLSX configuration template (mock data)
+├── tests/                    # Comprehensive pytest test suite (130+ tests)
 ├── install.sh                # Linux/macOS installer and Hermes skill setup
 ├── install.ps1               # Portable Windows PowerShell installer
-├── pyproject.toml            # Build metadata (v1.2.1)
+├── pyproject.toml            # Build metadata (v1.2.2)
 ├── SKILL.md                  # Autonomous agent skill specification
 ├── .env.example              # Environment variables template
 ├── LICENSE                   # MIT License
@@ -154,18 +157,23 @@ flow-account status
 
 ## How to Create the Real Configuration Spreadsheet
 
-1. **Copy the Official Template**:
+Follow this 10-step onboarding flow to set up your accounts:
+
+1. **Install the CLI**:
+   Run `./install.sh` (Linux/macOS) or `.\install.ps1` (Windows).
+
+2. **Copy the Official Template**:
    Copy the official template `templates/flow_accounts_template.xlsx` to your local configuration path:
    ```bash
-   mkdir -p config
    cp templates/flow_accounts_template.xlsx config/flow_accounts.xlsx
    ```
-   > 📌 **Best Practice**: **Never edit the original template for daily use.** Always edit your local copy in `config/flow_accounts.xlsx`. The `config/` directory is automatically ignored by `.gitignore` so your real accounts and personal data will never be committed to Git.
-   >
-   > *(Note on CSV: `templates/accounts_template.csv` is retained as a simple CSV alternative, but `templates/flow_accounts_template.xlsx` is the official recommended format).*
+   > 📌 **Best Practice**: **Never edit the original template for daily use.** Always edit your local copy in `config/flow_accounts.xlsx`. The `config/flow_accounts.xlsx` file and any `config/*.xlsx` are strictly ignored by Git via `.gitignore`, ensuring your real accounts and personal data are never committed.
 
-2. **Edit the `ACCOUNTS` Sheet**:
-   Open `config/flow_accounts.xlsx` in Excel, LibreOffice, or Google Sheets and configure your accounts:
+3. **Open `config/flow_accounts.xlsx`**:
+   Open the file in Excel, LibreOffice, or Google Sheets.
+
+4. **Edit the `ACCOUNTS` Sheet (Emails & Order)**:
+   Replace the fictional emails with your real Google Flow account emails:
 
    | order | email | daily_limit | monthly_limit | enabled | credential_ref | notes |
    |---|---|---|---|---|---|---|
@@ -179,20 +187,50 @@ flow-account status
    - **`monthly_limit`**: Monthly credit quota for this specific account (optional).
    - **`enabled`**: `YES` to include in active rotation, `NO` to disable.
    - **`credential_ref`**: Safe reference key (recommended: `KEYRING:<email>`).
-   - **`notes`**: **(Optional)** Arbitrary human-readable observations or tags. Does NOT influence account selection logic or quotas.
+   - **`notes`**: **(Optional)** Field for human observations only. Does NOT influence selection, rotation, limits, priority, or credentials.
 
    > ⚠️ **CRITICAL SECURITY RULE**: **NEVER put passwords or raw API keys in the Excel spreadsheet.** Store only the `KEYRING:<email>` reference.
 
-3. **Edit the `SETTINGS` Sheet**:
-   Configure system-wide defaults:
+5. **Edit the `SETTINGS` Sheet (Global Defaults)**:
+   Configure system-wide defaults in the `SETTINGS` sheet:
 
    | Setting | Value | Description |
    |---|---|---|
-   | `rotation_strategy` | `sequential` | Strategy: `sequential`, `random`, `round-robin`, `lowest-usage` |
-   | `default_daily_limit` | `85` | Default daily limit for new accounts |
-   | `default_monthly_limit` | `1500` | Optional default monthly limit |
-   | `timezone` | `America/Bahia` | Timezone for daily/monthly credit rollover |
-   | `auto_rotate` | `YES` | `YES` for AUTO mode, `NO` for MANUAL |
+   | `rotation_strategy` | `sequential` | Selection strategy: sequential \| random \| round-robin \| lowest-usage |
+   | `default_daily_limit` | `85` | Default daily credit limit applied when an account-specific value is not provided |
+   | `default_monthly_limit` | `1500` | Default monthly credit limit applied when an account-specific value is not provided |
+   | `timezone` | `America/Bahia` | Timezone for daily and monthly credit rollovers |
+   | `auto_rotate` | `YES` | YES for automatic account rotation, NO for manual/pinned mode |
+
+6. **Save Passwords Securely**:
+   For each account, register its password securely into the OS Keyring:
+   ```bash
+   flow-account credential set user@example.com
+   ```
+   The password input is completely hidden in the terminal and never printed to screen, database, or spreadsheet.
+
+7. **Test Credentials**:
+   Verify that your registered credential is functional:
+   ```bash
+   flow-account credential test user@example.com
+   ```
+
+8. **Synchronize Configuration**:
+   Import your spreadsheet into the database engine:
+   ```bash
+   flow-account sync config/flow_accounts.xlsx
+   ```
+
+9. **Verify Accounts & Active Selection**:
+   Check the status of your pool:
+   ```bash
+   flow-account list
+   flow-account status
+   flow-account current
+   ```
+
+10. **Ready for Production**:
+    Your automated pipelines and AI agents can now reserve and consume credits safely.
 
 ---
 

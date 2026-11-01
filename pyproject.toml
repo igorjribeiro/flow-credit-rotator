@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flow-credit-rotator"
-version = "1.2.1"
+version = "1.2.2"
 description = "Multi-account credit rotation and quota manager for Google Flow automation agents."
 readme = "README.md"
 license = { text = "MIT" }

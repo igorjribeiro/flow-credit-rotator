@@ -38,10 +38,10 @@ def test_package_metadata():
 
     content = pyproject_path.read_text(encoding="utf-8")
     assert 'name = "flow-credit-rotator"' in content
-    assert 'version = "1.2.1"' in content
+    assert 'version = "1.2.2"' in content
     assert 'license = { text = "MIT" }' in content
     assert 'Multi-account' in content
-    assert __version__ == "1.2.1"
+    assert __version__ == "1.2.2"
 
     assert 'Repository = "https://github.com/igorjribeiro/flow-credit-rotator"' in content
     assert 'Homepage = "https://github.com/igorjribeiro/flow-credit-rotator"' in content
@@ -142,32 +142,15 @@ def test_gitignore_covers_all_required_rules():
 
 
 def test_import_templates_safety_and_validity(temp_db_path):
-    """Verify template files (CSV and XLSX) contain valid mock data and zero passwords."""
-    csv_path = REPO_ROOT / "templates" / "accounts_template.csv"
+    """Verify official template file (XLSX) contains valid mock data and zero passwords."""
     xlsx_path = REPO_ROOT / "templates" / "flow_accounts_template.xlsx"
-
-    assert csv_path.exists(), "CSV template must exist"
     assert xlsx_path.exists(), "Official XLSX template must exist"
 
-    # Verify CSV has mock emails and no passwords
-    csv_text = csv_path.read_text(encoding="utf-8")
-    for forbidden in ["password", "senha", "secret_key"]:
-        assert forbidden not in csv_text.lower().split("\n")[0]
-
-    # Test importing CSV into fresh manager
+    # Test importing/syncing XLSX into fresh manager
     manager = FlowAccountManager(db_path=temp_db_path)
-    res_csv = manager.import_accounts(str(csv_path))
-    assert res_csv["imported"] >= 3
+    res_xlsx = manager.sync(str(xlsx_path))
+    assert res_xlsx["added"] >= 3
     for acc in manager.list_accounts():
-        assert acc.email.endswith("@example.com")
-        assert acc.status == AccountStatus.ACTIVE
-
-    # Test importing XLSX into fresh manager
-    db_xlsx = str(Path(temp_db_path).parent / "xlsx_test.db")
-    manager_xlsx = FlowAccountManager(db_path=db_xlsx)
-    res_xlsx = manager_xlsx.import_accounts(str(xlsx_path))
-    assert res_xlsx["imported"] >= 3
-    for acc in manager_xlsx.list_accounts():
         assert acc.email.endswith("@example.com")
         assert acc.status == AccountStatus.ACTIVE
 

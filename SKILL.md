@@ -149,7 +149,7 @@ The workbook contains two sheets:
    - `monthly_limit`: Optional monthly limit (e.g. 1500)
    - `enabled`: `YES` or `NO`
    - `credential_ref`: Safe indirect reference (`KEYRING:user@example.com`, `ENV:FLOW01`)
-   - `notes`: Operational description
+   - `notes`: **(Optional)** Operational description for human observation only. Does not influence selection or rotation logic.
 2. **`SETTINGS`**:
    - `rotation_strategy`: `sequential` (default) or `random`
    - `default_daily_limit`: 85
@@ -163,7 +163,7 @@ The workbook contains two sheets:
 
 ## Credential Safety Model
 
-1. **Strictly No Plaintext Passwords**: Neither CSV/XLSX spreadsheets nor the SQLite database store plaintext passwords.
+1. **Strictly No Plaintext Passwords**: Neither Excel spreadsheets nor the SQLite database store plaintext passwords.
 2. **Keyring Integration**:
    - Use `flow-account credential set <ref>` to store passwords in OS Keyring / Windows Credential Manager.
    - Accounts reference stored keys via `KEYRING:<id>` or `ENV:<VAR_NAME>`.
