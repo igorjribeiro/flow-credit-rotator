@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-v1.2.0-blue.svg)](https://github.com/igorjribeiro/flow-credit-rotator/releases/tag/v1.2.0)
+[![Version](https://img.shields.io/badge/version-v1.2.1-blue.svg)](https://github.com/igorjribeiro/flow-credit-rotator/releases/tag/v1.2.1)
 [![Status](https://img.shields.io/badge/status-production--ready-green.svg)](#)
 
 A robust, production-grade credit rotation, pre-check reservation, and quota management system for multiple Google Flow accounts. Designed specifically for autonomous AI agents and automated video rendering pipelines.
@@ -75,13 +75,12 @@ flow-credit-rotator/
 │   ├── manager.py            # Orchestration engine with reservation lifecycle
 │   └── cli.py                # Command-line interface
 ├── templates/
-│   ├── flow_accounts_template.xlsx # Central configuration template (mock data)
-│   ├── accounts_template.csv  # CSV batch import template
-│   └── accounts_template.xlsx # Single-sheet XLSX import template
-├── tests/                    # Comprehensive pytest test suite (127+ tests)
+│   ├── flow_accounts_template.xlsx # Sole official XLSX configuration template (mock data)
+│   └── accounts_template.csv  # CSV alternative import template (XLSX recommended)
+├── tests/                    # Comprehensive pytest test suite (128+ tests)
 ├── install.sh                # Linux/macOS installer and Hermes skill setup
 ├── install.ps1               # Portable Windows PowerShell installer
-├── pyproject.toml            # Build metadata (v1.2.0)
+├── pyproject.toml            # Build metadata (v1.2.1)
 ├── SKILL.md                  # Autonomous agent skill specification
 ├── .env.example              # Environment variables template
 ├── LICENSE                   # MIT License
@@ -155,13 +154,15 @@ flow-account status
 
 ## How to Create the Real Configuration Spreadsheet
 
-1. **Copy the Template**:
-   Copy `templates/flow_accounts_template.xlsx` to your local configuration path:
+1. **Copy the Official Template**:
+   Copy the official template `templates/flow_accounts_template.xlsx` to your local configuration path:
    ```bash
    mkdir -p config
    cp templates/flow_accounts_template.xlsx config/flow_accounts.xlsx
    ```
-   *(Note: The `config/` directory is automatically ignored by `.gitignore`. Your real accounts will never be committed to Git).*
+   > 📌 **Best Practice**: **Never edit the original template for daily use.** Always edit your local copy in `config/flow_accounts.xlsx`. The `config/` directory is automatically ignored by `.gitignore` so your real accounts and personal data will never be committed to Git.
+   >
+   > *(Note on CSV: `templates/accounts_template.csv` is retained as a simple CSV alternative, but `templates/flow_accounts_template.xlsx` is the official recommended format).*
 
 2. **Edit the `ACCOUNTS` Sheet**:
    Open `config/flow_accounts.xlsx` in Excel, LibreOffice, or Google Sheets and configure your accounts:
@@ -178,7 +179,7 @@ flow-account status
    - **`monthly_limit`**: Monthly credit quota for this specific account (optional).
    - **`enabled`**: `YES` to include in active rotation, `NO` to disable.
    - **`credential_ref`**: Safe reference key (recommended: `KEYRING:<email>`).
-   - **`notes`**: Arbitrary human-readable context. Does not affect rotation logic.
+   - **`notes`**: **(Optional)** Arbitrary human-readable observations or tags. Does NOT influence account selection logic or quotas.
 
    > ⚠️ **CRITICAL SECURITY RULE**: **NEVER put passwords or raw API keys in the Excel spreadsheet.** Store only the `KEYRING:<email>` reference.
 

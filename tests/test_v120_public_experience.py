@@ -124,3 +124,28 @@ def test_readme_covers_all_onboarding_sections():
     assert "flow-account reserve" in content
     assert "flow-account reserve-confirm" in content or "commit" in content
     assert "flow-account reserve-cancel" in content or "cancel" in content
+
+
+def test_only_single_official_xlsx_template_in_templates():
+    """Verify templates/flow_accounts_template.xlsx is the only official XLSX template, and duplicates are gone."""
+    templates_dir = REPO_ROOT / "templates"
+    xlsx_files = list(templates_dir.glob("*.xlsx"))
+    assert len(xlsx_files) == 1, f"Expected exactly 1 XLSX template in templates/, found: {[f.name for f in xlsx_files]}"
+    assert xlsx_files[0].name == "flow_accounts_template.xlsx"
+
+    # Redundant templates must not exist
+    assert not (templates_dir / "accounts_template.xlsx").exists()
+    assert not (templates_dir / "modelo_de_contas_de_fluxo.xlsx").exists()
+
+    # CSV template is retained as alternative
+    assert (templates_dir / "accounts_template.csv").exists()
+
+
+def test_notes_column_documented_as_optional_and_safe_usage():
+    """Verify notes column is documented as optional in README.md and advice against editing template directly."""
+    readme_path = REPO_ROOT / "README.md"
+    content = readme_path.read_text(encoding="utf-8").lower()
+
+    assert "notes" in content
+    assert "optional" in content
+    assert "never edit the original template" in content or "never edit the template directly" in content or "never edit the template original" in content

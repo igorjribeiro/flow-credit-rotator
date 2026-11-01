@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-10-31
+
+### Changed
+- **Consolidated Official Template**:
+  - Maintained `templates/flow_accounts_template.xlsx` as the sole official public XLSX model.
+  - Removed duplicate/redundant `templates/accounts_template.xlsx` to avoid confusion.
+  - Retained `templates/accounts_template.csv` as a simple alternative for CSV-only environments while designating XLSX as the official recommended format.
+  - Updated `README.md` to point strictly to `templates/flow_accounts_template.xlsx` as the source to copy to `config/flow_accounts.xlsx`.
+  - Documented that the `notes` column in the `ACCOUNTS` sheet is strictly optional and does not affect account rotation logic.
+
 ## [1.2.0] - 2026-10-31
 
 ### Added

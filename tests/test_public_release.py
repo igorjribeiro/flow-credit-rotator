@@ -38,10 +38,10 @@ def test_package_metadata():
 
     content = pyproject_path.read_text(encoding="utf-8")
     assert 'name = "flow-credit-rotator"' in content
-    assert 'version = "1.2.0"' in content
+    assert 'version = "1.2.1"' in content
     assert 'license = { text = "MIT" }' in content
     assert 'Multi-account' in content
-    assert __version__ == "1.2.0"
+    assert __version__ == "1.2.1"
 
     assert 'Repository = "https://github.com/igorjribeiro/flow-credit-rotator"' in content
     assert 'Homepage = "https://github.com/igorjribeiro/flow-credit-rotator"' in content
@@ -144,10 +144,10 @@ def test_gitignore_covers_all_required_rules():
 def test_import_templates_safety_and_validity(temp_db_path):
     """Verify template files (CSV and XLSX) contain valid mock data and zero passwords."""
     csv_path = REPO_ROOT / "templates" / "accounts_template.csv"
-    xlsx_path = REPO_ROOT / "templates" / "accounts_template.xlsx"
+    xlsx_path = REPO_ROOT / "templates" / "flow_accounts_template.xlsx"
 
     assert csv_path.exists(), "CSV template must exist"
-    assert xlsx_path.exists(), "XLSX template must exist"
+    assert xlsx_path.exists(), "Official XLSX template must exist"
 
     # Verify CSV has mock emails and no passwords
     csv_text = csv_path.read_text(encoding="utf-8")
